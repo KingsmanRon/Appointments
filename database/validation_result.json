@@ -1,0 +1,274 @@
+{
+  "started_at": "2026-09-21T07:30:03.376672+00:00",
+  "finished_at": "2026-09-21T07:30:05.875754+00:00",
+  "scope": "local reference DDL and storage security smoke checks; application acceptance not run",
+  "host": "127.0.0.1",
+  "port": 55483,
+  "database": "access_final_schema_v2",
+  "postgresql_version": "18.1",
+  "domain_tables": "42",
+  "schema_sha256": "5697cf24fcf91308033686725497d101960760d7d9c357ebc862e90db0cb747a",
+  "passed": 37,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "server_version",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "18.1",
+      "error": ""
+    },
+    {
+      "name": "all_domain_tables_force_rls",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "0",
+      "error": ""
+    },
+    {
+      "name": "domain_table_count",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "42",
+      "error": ""
+    },
+    {
+      "name": "create_synthetic_fixtures",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "",
+      "error": ""
+    },
+    {
+      "name": "real_login_identity",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "access_check_422edeec_a",
+      "error": ""
+    },
+    {
+      "name": "tenant_a_isolation",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "8e483b40-9e06-4203-9fdc-fd91b2156176",
+      "error": ""
+    },
+    {
+      "name": "tenant_b_isolation",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "026bc788-a8f4-438c-b4b1-db908a30ae28",
+      "error": ""
+    },
+    {
+      "name": "unmapped_identity_fails_closed",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "0",
+      "error": ""
+    },
+    {
+      "name": "tenant_setting_cannot_override_login",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "8e483b40-9e06-4203-9fdc-fd91b2156176",
+      "error": ""
+    },
+    {
+      "name": "cross_tenant_role_denied",
+      "status": "PASS",
+      "expected_sqlstate": "42501",
+      "output": "",
+      "error": "ERROR:  42501"
+    },
+    {
+      "name": "principal_map_read_denied",
+      "status": "PASS",
+      "expected_sqlstate": "42501",
+      "output": "",
+      "error": "ERROR:  42501"
+    },
+    {
+      "name": "principal_map_write_denied",
+      "status": "PASS",
+      "expected_sqlstate": "42501",
+      "output": "",
+      "error": "ERROR:  42501"
+    },
+    {
+      "name": "cross_tenant_insert_denied",
+      "status": "PASS",
+      "expected_sqlstate": "42501",
+      "output": "",
+      "error": "ERROR:  42501"
+    },
+    {
+      "name": "cross_tenant_fk_denied",
+      "status": "PASS",
+      "expected_sqlstate": "23503",
+      "output": "",
+      "error": "ERROR:  23503"
+    },
+    {
+      "name": "delete_denied",
+      "status": "PASS",
+      "expected_sqlstate": "42501",
+      "output": "",
+      "error": "ERROR:  42501"
+    },
+    {
+      "name": "worker_cannot_change_memberships",
+      "status": "PASS",
+      "expected_sqlstate": "42501",
+      "output": "",
+      "error": "ERROR:  42501"
+    },
+    {
+      "name": "worker_can_lock_authority_guard",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "8e483b40-9e06-4203-9fdc-fd91b2156176",
+      "error": ""
+    },
+    {
+      "name": "execution_body_is_immutable",
+      "status": "PASS",
+      "expected_sqlstate": "55000",
+      "output": "",
+      "error": "ERROR:  55000"
+    },
+    {
+      "name": "approval_is_immutable",
+      "status": "PASS",
+      "expected_sqlstate": "55000",
+      "output": "",
+      "error": "ERROR:  55000"
+    },
+    {
+      "name": "command_receipt_is_immutable",
+      "status": "PASS",
+      "expected_sqlstate": "55000",
+      "output": "",
+      "error": "ERROR:  55000"
+    },
+    {
+      "name": "invalid_referral_state_denied",
+      "status": "PASS",
+      "expected_sqlstate": "23514",
+      "output": "",
+      "error": "ERROR:  23514"
+    },
+    {
+      "name": "upload_job_without_referral_supported",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "",
+      "error": ""
+    },
+    {
+      "name": "write_job_without_execution_denied",
+      "status": "PASS",
+      "expected_sqlstate": "23514",
+      "output": "",
+      "error": "ERROR:  23514"
+    },
+    {
+      "name": "recovery_lane_enforced",
+      "status": "PASS",
+      "expected_sqlstate": "23514",
+      "output": "",
+      "error": "ERROR:  23514"
+    },
+    {
+      "name": "wrong_grant_consumption_rejected",
+      "status": "PASS",
+      "expected_sqlstate": "23503",
+      "output": "",
+      "error": "ERROR:  23503"
+    },
+    {
+      "name": "failed_transaction_rolled_back_attempt",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "0",
+      "error": ""
+    },
+    {
+      "name": "correct_grant_consumption_supported",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "",
+      "error": ""
+    },
+    {
+      "name": "consumption_cannot_reset",
+      "status": "PASS",
+      "expected_sqlstate": "55000",
+      "output": "",
+      "error": "ERROR:  55000"
+    },
+    {
+      "name": "second_started_attempt_denied",
+      "status": "PASS",
+      "expected_sqlstate": "23505",
+      "output": "",
+      "error": "ERROR:  23505"
+    },
+    {
+      "name": "manual_plan_storage_supported",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "",
+      "error": ""
+    },
+    {
+      "name": "manual_plan_immutable",
+      "status": "PASS",
+      "expected_sqlstate": "55000",
+      "output": "",
+      "error": "ERROR:  55000"
+    },
+    {
+      "name": "unknown_effort_not_zero",
+      "status": "PASS",
+      "expected_sqlstate": "23514",
+      "output": "",
+      "error": "ERROR:  23514"
+    },
+    {
+      "name": "session_revocation_storage",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "",
+      "error": ""
+    },
+    {
+      "name": "session_revocation_immutable",
+      "status": "PASS",
+      "expected_sqlstate": "55000",
+      "output": "",
+      "error": "ERROR:  55000"
+    },
+    {
+      "name": "accepted_artifact_requires_scan_result",
+      "status": "PASS",
+      "expected_sqlstate": "23514",
+      "output": "",
+      "error": "ERROR:  23514"
+    },
+    {
+      "name": "accepted_artifact_supported",
+      "status": "PASS",
+      "expected_sqlstate": null,
+      "output": "",
+      "error": ""
+    },
+    {
+      "name": "accepted_artifact_hash_immutable",
+      "status": "PASS",
+      "expected_sqlstate": "55000",
+      "output": "",
+      "error": "ERROR:  55000"
+    }
+  ]
+}
