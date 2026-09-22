@@ -1,4 +1,4 @@
-# ACCESS v1 deployment specification
+# ACCESS v1.1 deployment specification
 
 Status: implementation baseline. This document specifies the target configuration; it does not claim that accounts, credentials, deployments or production controls already exist.
 

@@ -49,7 +49,8 @@ def check(name, sql, user=None, result=None, error=None):
 ids = {k: str(uuid.uuid4()) for k in [
     'a','b','user_a','user_b','patient_a','patient_b','ref_a','ref_b','integration',
     'capability','mapping','verifications','decision','execution','executor',
-    'policy','approval','session','grant_a','grant_b','attempt','artifact','work','prep','command']}
+    'policy','rule_set','case_a','case_b','interaction','outcome','approval','session',
+    'grant_a','grant_b','attempt','artifact','work','prep','command']}
 v = ids
 suffix = uuid.uuid4().hex[:8]
 role_a, role_b, worker, unmapped = [f'access_check_{suffix}_{x}' for x in ['a','b','worker','unmapped']]
@@ -72,8 +73,14 @@ try:
     INSERT INTO access.memberships(org_id,user_id,role) VALUES
       ('{v['a']}','{v['user_a']}','ADMIN'),('{v['b']}','{v['user_b']}','ADMIN');
     INSERT INTO access.patients(org_id,patient_id) VALUES ('{v['a']}','{v['patient_a']}'),('{v['b']}','{v['patient_b']}');
-    INSERT INTO access.referrals(org_id,referral_id,patient_id) VALUES
-      ('{v['a']}','{v['ref_a']}','{v['patient_a']}'),('{v['b']}','{v['ref_b']}','{v['patient_b']}');
+    INSERT INTO access.access_rule_sets(org_id,rule_set_id,version,status,definition,definition_hash,published_by,published_at)
+      VALUES ('{v['a']}','{v['rule_set']}','test','PUBLISHED','{{}}','{digest}','{v['user_a']}',clock_timestamp());
+    INSERT INTO access.access_cases(org_id,case_id,case_type,source_channel,patient_id,current_rule_set_id) VALUES
+      ('{v['a']}','{v['case_a']}','REFERRAL','STAFF_UPLOAD','{v['patient_a']}','{v['rule_set']}'),
+      ('{v['b']}','{v['case_b']}','REFERRAL','STAFF_UPLOAD','{v['patient_b']}',NULL);
+    INSERT INTO access.referrals(org_id,referral_id,case_id,patient_id) VALUES
+      ('{v['a']}','{v['ref_a']}','{v['case_a']}','{v['patient_a']}'),
+      ('{v['b']}','{v['ref_b']}','{v['case_b']}','{v['patient_b']}');
     INSERT INTO access.integrations(org_id,integration_id,connector_kind,environment,destination_key)
       VALUES ('{v['a']}','{v['integration']}','MOCK','TEST','synthetic_account');
     INSERT INTO access.capability_snapshots(org_id,capability_id,integration_id,version,manifest,manifest_hash)
@@ -84,8 +91,8 @@ try:
       VALUES ('{v['a']}','{v['verifications']}','{v['ref_a']}',1,'{digest}','{v['user_a']}');
     INSERT INTO access.identity_decisions(org_id,identity_decision_id,referral_id,verification_set_id,integration_id,decision,decided_by,evidence)
       VALUES ('{v['a']}','{v['decision']}','{v['ref_a']}','{v['verifications']}','{v['integration']}','PROPOSE_CREATE','{v['user_a']}','{{}}');
-    INSERT INTO access.executions(org_id,execution_id,referral_id,verification_set_id,identity_decision_id,integration_id,capability_id,mapping_id,operation,action_schema_version,final_action,request_body,request_body_sha256,request_body_length_bytes,action_hash,idempotency_key,sequence_number,created_by)
-      VALUES ('{v['a']}','{v['execution']}','{v['ref_a']}','{v['verifications']}','{v['decision']}','{v['integration']}','{v['capability']}','{v['mapping']}','patient.create','test','{{}}',decode('7b7d','hex'),'{digest}',2,'{digest}','{v['execution']}',1,'{v['user_a']}');
+    INSERT INTO access.executions(org_id,execution_id,case_id,referral_id,verification_set_id,identity_decision_id,integration_id,capability_id,mapping_id,operation,action_schema_version,final_action,request_body,request_body_sha256,request_body_length_bytes,action_hash,idempotency_key,sequence_number,created_by)
+      VALUES ('{v['a']}','{v['execution']}','{v['case_a']}','{v['ref_a']}','{v['verifications']}','{v['decision']}','{v['integration']}','{v['capability']}','{v['mapping']}','patient.create','test','{{}}',decode('7b7d','hex'),'{digest}',2,'{digest}','{v['execution']}',1,'{v['user_a']}');
     INSERT INTO access.executors(org_id,executor_id,integration_id,authenticated_subject,credential_version)
       VALUES ('{v['a']}','{v['executor']}','{v['integration']}','synthetic_connector','test');
     INSERT INTO access.policy_versions(org_id,policy_version_id,version,definition,definition_hash,published_by)
@@ -97,8 +104,8 @@ try:
       ('{v['a']}','{v['grant_b']}','{'2'*64}','{v['execution']}','{v['integration']}','{v['executor']}','{v['approval']}','{v['policy']}',1,'{digest}','{v['user_a']}',clock_timestamp()+interval '60 seconds');
     INSERT INTO access.raw_artifacts(org_id,artifact_id,source,object_path,expected_mime,expected_max_bytes,reserved_until,retention_until)
       VALUES ('{v['a']}','{v['artifact']}','SYNTHETIC','{v['a']}/test.pdf','application/pdf',100,clock_timestamp()+interval '30 minutes',clock_timestamp()+interval '7 days');
-    INSERT INTO access.work_items(org_id,work_item_id,referral_id,kind)
-      VALUES ('{v['a']}','{v['work']}','{v['ref_a']}','SAFE_MANUAL_COMMIT');
+    INSERT INTO access.work_items(org_id,work_item_id,case_id,referral_id,kind)
+      VALUES ('{v['a']}','{v['work']}','{v['case_a']}','{v['ref_a']}','SAFE_MANUAL_COMMIT');
     INSERT INTO access.commands(org_id,command_id,caller_subject,route_family,dedupe_key,command_type,request_hash,result)
       VALUES ('{v['a']}','{v['command']}','synthetic','fixture','test','test','{digest}','{{}}');
     """
@@ -120,9 +127,13 @@ try:
     check('approval_is_immutable', f"UPDATE access.action_approvals SET action_hash='{'b'*64}' WHERE approval_id='{v['approval']}';", role_a, error='55000')
     check('command_receipt_is_immutable', "UPDATE access.commands SET result='{\"changed\":true}';", role_a, error='55000')
     check('invalid_referral_state_denied', "UPDATE access.referrals SET state='COMPLETED';", role_a, error='23514')
+    check('destination_commit_is_nonterminal', f"UPDATE access.referrals SET state='COMMITTED' WHERE referral_id='{v['ref_a']}'; SELECT completed_at IS NULL FROM access.referrals WHERE referral_id='{v['ref_a']}';", role_a, 't')
+    check('case_interaction_storage', f"INSERT INTO access.access_interactions(org_id,interaction_id,case_id,channel,direction,actor_kind,intent,identity_verification_level,content_reference,occurred_at) VALUES ('{v['a']}','{v['interaction']}','{v['case_a']}','INTERNAL','INTERNAL','STAFF','REFERRAL_REVIEW','VERIFIED','{{}}',clock_timestamp());", role_a)
+    check('booking_outcome_storage', f"INSERT INTO access.case_outcomes(org_id,outcome_id,case_id,outcome_type,source_type,measurement_kind,external_reference,evidence,observed_at,recorded_by) VALUES ('{v['a']}','{v['outcome']}','{v['case_a']}','APPOINTMENT_BOOKED','HUMAN','OBSERVED','synthetic-booking','{{}}',clock_timestamp(),'{v['user_a']}');", role_a)
+    check('booking_outcome_immutable', "UPDATE access.case_outcomes SET outcome_type='UNKNOWN_STATUS';", role_a, error='55000')
     check('upload_job_without_referral_supported', f"INSERT INTO access.outbox(org_id,artifact_id,effect_type,lane,dedupe_key,sequence_number,payload) VALUES ('{v['a']}','{v['artifact']}','VERIFY_UPLOAD','LOCAL','upload_test',1,'{{}}');", role_a)
-    check('write_job_without_execution_denied', f"INSERT INTO access.outbox(org_id,referral_id,effect_type,lane,dedupe_key,sequence_number,payload) VALUES ('{v['a']}','{v['ref_a']}','DISPATCH_EXECUTION','WRITE','bad_write',1,'{{}}');", role_a, error='23514')
-    check('recovery_lane_enforced', f"INSERT INTO access.outbox(org_id,referral_id,execution_id,effect_type,lane,dedupe_key,sequence_number,payload) VALUES ('{v['a']}','{v['ref_a']}','{v['execution']}','RECONCILE_EXECUTION','WRITE','bad_recovery',2,'{{}}');", role_a, error='23514')
+    check('write_job_without_execution_denied', f"INSERT INTO access.outbox(org_id,case_id,referral_id,effect_type,lane,dedupe_key,sequence_number,payload) VALUES ('{v['a']}','{v['case_a']}','{v['ref_a']}','DISPATCH_EXECUTION','WRITE','bad_write',1,'{{}}');", role_a, error='23514')
+    check('recovery_lane_enforced', f"INSERT INTO access.outbox(org_id,case_id,referral_id,execution_id,effect_type,lane,dedupe_key,sequence_number,payload) VALUES ('{v['a']}','{v['case_a']}','{v['ref_a']}','{v['execution']}','RECONCILE_EXECUTION','WRITE','bad_recovery',2,'{{}}');", role_a, error='23514')
     attempt = f"""INSERT INTO access.execution_attempts(org_id,attempt_id,execution_id,executor_id,grant_id,attempt_number,state,start_request_id,invocation_owner,dispatch_by,request_deadline_at)
       VALUES ('{v['a']}','{v['attempt']}','{v['execution']}','{v['executor']}','{v['grant_a']}',1,'STARTED',gen_random_uuid(),'live_test',clock_timestamp()+interval '5 seconds',clock_timestamp()+interval '30 seconds');"""
     check('wrong_grant_consumption_rejected', 'BEGIN;' + attempt + f"UPDATE access.action_grants SET consumed_at=clock_timestamp(),consumed_attempt_id='{v['attempt']}' WHERE grant_id='{v['grant_b']}'; COMMIT;", role_a, error='23503')
@@ -134,7 +145,7 @@ try:
     check('manual_plan_storage_supported', f"""INSERT INTO access.manual_preparations(org_id,preparation_id,referral_id,work_item_id,integration_id,verification_set_id,identity_decision_id,prepared_action,prepared_action_hash,safety_basis,safety_evidence,approved_by,approval_session_id,expires_at)
       VALUES ('{v['a']}','{v['prep']}','{v['ref_a']}','{v['work']}','{v['integration']}','{v['verifications']}','{v['decision']}','{{}}','{digest}','NEVER_STARTED','{{}}','{v['user_a']}','{v['session']}',clock_timestamp()+interval '30 minutes');""", role_a)
     check('manual_plan_immutable', "UPDATE access.manual_preparations SET prepared_action='{\"changed\":true}';", role_a, error='55000')
-    check('unknown_effort_not_zero', f"INSERT INTO access.effort_sessions(org_id,referral_id,user_id,activity,measurement_kind,duration_seconds,method) VALUES ('{v['a']}','{v['ref_a']}','{v['user_a']}','REVIEW','UNKNOWN',0,'test');", role_a, error='23514')
+    check('unknown_effort_not_zero', f"INSERT INTO access.effort_sessions(org_id,case_id,referral_id,user_id,activity,measurement_kind,duration_seconds,method) VALUES ('{v['a']}','{v['case_a']}','{v['ref_a']}','{v['user_a']}','REVIEW','UNKNOWN',0,'test');", role_a, error='23514')
     check('session_revocation_storage', f"INSERT INTO access.session_revocations(org_id,user_id,session_id,reason_code) VALUES ('{v['a']}','{v['user_a']}','{v['session']}','staff_sign_out');", role_a)
     check('session_revocation_immutable', 'UPDATE access.session_revocations SET revoked_at=clock_timestamp();', role_a, error='55000')
     check('accepted_artifact_requires_scan_result', f"UPDATE access.raw_artifacts SET upload_state='ACCEPTED',content_hash='{digest}',actual_bytes=50,accepted_at=clock_timestamp(),accepted_bucket_name='access-accepted',accepted_object_path='{v['a']}/accepted.pdf',scanner_name='synthetic',scanner_version='1',scanner_definition_version='1',scanned_at=clock_timestamp(),detected_mime='application/pdf' WHERE artifact_id='{v['artifact']}';", role_a, error='23514')

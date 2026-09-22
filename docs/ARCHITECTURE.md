@@ -1,12 +1,14 @@
-# ACCESS v1 architecture
+# ACCESS v1.1 architecture
 
 ## 1. Product decision
 
-ACCESS is a referral intake and completion system. It receives referral documents, preserves their source, helps staff resolve identity and missing information, prepares an exact destination action, obtains approval, performs the action through a connector, and records its outcome.
+ACCESS is a standalone patient-access orchestration layer that converts inbound referrals into verified, complete and tracked outcomes inside a provider's existing systems. It receives referral documents, preserves their source, helps staff resolve identity and missing information, prepares an exact destination action, obtains approval, performs the action through a connector, and follows the access case until an appointment is confirmed or the case is deliberately closed.
 
-The first complete workflow is upload to verified DTM completion with an exception queue. ACCESS owns referral processing state. DTM remains authoritative for the records it accepts. ACCESS stores external references and provenance, rather than presenting its local patient index as a replacement clinical record.
+The first module is **ACCESS Referral Operations**. The first complete workflow is one selected intake channel through verified DTM commitment, booking-status observation and an exception queue. ACCESS owns the access case and its referral-processing state. DTM remains authoritative for the records it accepts and the scheduling system remains authoritative for appointments. ACCESS stores external references, observations and provenance rather than presenting its local patient index as a replacement clinical record.
 
-Appointment scheduling, slot reservations, clinical triage, billing, payments, scheme submissions and patient record merging are outside v1. Do not silently add these because the workspace is named Appointments.
+`COMMITTED` means that a destination write was confirmed. It is not a patient-access success. Success requires a separate observed booking or an evidenced closure outcome. Full appointment search and booking, slot reservations, clinical triage, billing, payments, scheme submissions and patient record merging are outside v1.1. Do not silently add these because the workspace is named Appointments.
+
+The market thesis, buyer, pilot and metric definitions are in [WHITEPAPER_ALIGNMENT.md](WHITEPAPER_ALIGNMENT.md). The competing products and defensible wedge are in [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md).
 
 ## 2. Fixed implementation choices
 
@@ -23,6 +25,7 @@ Appointment scheduling, slot reservations, clinical triage, billing, payments, s
 | Processing | Railway persistent worker; local PDF extraction and OCR for v1 |
 | Execution | Isolated Railway connector runtime, DTM first, mock and manual paths included |
 | Policy | Local deterministic policy and durable grants; future Inntris binding uses the same behavioural contract |
+| Operational rules | Customer-owned, versioned access rules are separate from security/authority policy |
 | Release | Synthetic data first; staging verification before real patient processing |
 
 At build start, select supported package versions from official documentation and lock exact installed versions. Commit the lockfile. Do not leave floating dependency versions in a release. No specific patch version is frozen by this document.
@@ -80,10 +83,12 @@ database/schema.sql    Reference definition supplied in this pack
 | Intake | Upload sessions, received messages, artefact references and provenance | No patient writes or content interpretation |
 | Document | Scan status, extraction versions, source spans, confirmed fields, completeness | Never calls the destination |
 | Identity | Local index, identifiers, match proposals and durable identity claims | No automatic patient merge |
-| Workflow | Referral transitions, execution plans and orchestration | Sole owner of referral state changes |
+| Case | Access cases, interactions, case state and observed outcomes | A destination commit alone cannot resolve a case |
+| Workflow | Referral transitions, execution plans and orchestration | Sole owner of referral state changes; v1 enables only the referral case type |
 | Queue | Work items, assignments, resolutions and active effort sessions | Issues workflow commands |
+| Access rules | Versioned completeness, routing and follow-up rules | Does not grant authority or change an approved payload |
 | Mapping | Canonical data into an immutable executable action | No transport or credentials |
-| Policy | Current rules, approvals, grants, revocation and start authorisation | No remote write within its transaction |
+| Policy | Authority rules, approvals, grants, revocation and start authorisation | No operational routing and no remote write within its transaction |
 | Execution | Immutable execution records, attempts, observations and reconciliation | Connector results cannot overwrite referral state directly |
 | Evidence | Event append, checkpoints and metrics projections | Does not make business decisions |
 
@@ -107,7 +112,7 @@ Privileged tenant creation and login provisioning are controlled deployment task
 
 ## 7. Intake and document processing
 
-1. Staff creates an upload session for a tenant through the core API. The referral is created after the document is verified as safe; an optional draft association must not make quarantined content usable.
+1. Staff creates an upload session for a tenant through the core API. An ACCESS case and its referral extension are created after the document is verified as safe; an optional draft association must not make quarantined content usable.
 2. The server chooses an opaque object path and issues a scoped capability. The browser uploads directly to private Storage. No file body passes through a Vercel Function.
 3. Upload completion is an idempotent command. It schedules verification; it does not trust a browser supplied hash or declare the file safe.
 4. The worker checks object existence, actual size, detected MIME type and SHA256, then scans it. Limits are 20 MiB per file, PDF/PNG/JPEG only and at most 100 pages. Encrypted, malformed, unsupported and suspicious files enter review without extraction.
@@ -119,7 +124,15 @@ A content hash identifies equal file content within a tenant. It does not automa
 
 No remote LLM is required for v1. The extraction interface permits one later, after an approved data handling and evaluation route exists. Do not send real documents to a remote model merely to make the first build work. Clinical urgency in source material is displayed as source content; ACCESS does not infer triage or treatment.
 
-## 8. Identity and patient creation
+## 8. Access cases, interactions and operational rules
+
+`access_cases` is the stable platform aggregate. It carries a case type, source channel, high-level lifecycle, patient link, rule-set binding and optimistic version. A referral is a one-to-one extension for the enabled `REFERRAL` case type. Other reserved case types and channels remain disabled until their own contracts and acceptance evidence exist.
+
+Every inbound, outbound or internal touch that changes understanding of a case is an immutable interaction with a channel, direction, actor class, intent, identity-verification level and restricted content reference. Raw clinical narrative or message bodies remain in protected artefacts; the interaction record does not become a second document store.
+
+Operational access rules define completeness, routing, allowed closure reasons, follow-up intervals and booking-readiness requirements. They are versioned and customer owned. A case binds the version under which it is evaluated. Publishing an operational rule does not authorise a user or connector, and authority policy cannot silently change operational meaning. Any rule or mapping change affecting an already approved action invalidates that action and requires a fresh plan.
+
+## 9. Identity and patient creation
 
 Use identifiers with explicit type, issuer/country and normalisation version. A checksum or format check does not establish ownership. Persist provenance and verification status. Store searchable identifiers as tenant keyed HMAC digests; plain identifier values belong only in protected patient/document records. Do not use a public SHA256 of an identity number as anonymisation.
 
@@ -129,7 +142,7 @@ A durable identity claim coordinates creation under a reliable identifier. Reche
 
 The destination may also receive writes from staff or another integration. Local claims cannot exclude those. Destination uniqueness or explicit conflict resolution is required. Different identifier namespaces that cannot reliably be linked enter review.
 
-## 9. Executable action and approval
+## 10. Executable action and approval
 
 Prepare the connector payload before authorisation. Freeze destination identity, operation, HTTP method, path template resolution, relevant semantic headers, canonical body, mapping version and capability snapshot. Canonicalise according to RFC 8785 and hash the complete versioned action envelope. Transport credentials, trace IDs and volatile auth headers are added later and excluded; fields changing the action's meaning are included.
 
@@ -139,7 +152,7 @@ Each side effect has its own execution ID and immutable action. Dependent operat
 
 Local policy implements evaluate, issue_grant, authorise_and_start, revoke and record_outcome as specified in CONTRACTS. A future Inntris binding must pass the same conformance cases. There is no assertion that the currently existing Inntris implementation already meets this contract.
 
-## 10. Authoritative execution start
+## 11. Authoritative execution start
 
 The connector authenticates as the configured executor and requests permission to start. The core starts a short transaction and locks the tenant authority guard first. Membership changes, policy publication, approval revocation and integration disabling use the same guard.
 
@@ -149,7 +162,7 @@ Only the transaction that actually starts the attempt returns a one use dispatch
 
 This is the authorisation boundary. A revocation that commits before it blocks the action. Revocation after it cannot promise to recall an operation already authorised to start. No database transaction includes a foreign call, and no claim is made of atomicity with the remote PMS.
 
-## 11. Uncertainty and retry
+## 12. Uncertainty and retry
 
 An external timeout is an uncertain observation. The original attempt might still commit. A local cancelled task, expired lease, terminated process or negative eventually consistent search does not prove absence.
 
@@ -159,7 +172,7 @@ Every new dispatch attempt gets current authorisation and an unused attempt gran
 
 Manual prepared completion is separate from uncertain outcome resolution. A human cannot safely create again just because automation is unresolved. Human completion records who acted, what they attested and the external evidence. It is labelled human attestation until independently verified; it is not presented as cryptographic proof of exact external execution.
 
-## 12. Outcomes and command consistency
+## 13. Outcomes and command consistency
 
 Connector observations enter a durable inbox through authenticated commands. Record source identity, execution/attempt binding, observation ID and payload hash before reconciling workflow. Duplicate messages are no ops. Contradictory or mismatched observations enter investigation rather than overwriting established facts.
 
@@ -167,7 +180,9 @@ Human commands use expected_version and return a conflict on stale state. Extern
 
 Outbox leases allocate processing work; they never establish exactly once delivery. Enforce earliest unresolved sequence and dependency predicates in the claim transaction. Do not rely on lock acquisition order. No advisory lock spans HTTP calls.
 
-## 13. Evidence and measurement
+A confirmed destination write advances the referral to `COMMITTED`; it does not close the case. The case remains active until an immutable outcome observation establishes `APPOINTMENT_BOOKED` or an enumerated closure such as patient declined, patient unreachable, invalid referral or referred elsewhere. `UNKNOWN_STATUS` remains unresolved and is never included in the successful-booking numerator. Connector, human, import and derived outcomes remain distinguishable.
+
+## 14. Evidence and measurement
 
 Write every domain transition, its evidence event and any resulting intent in the same transaction. Event payloads contain minimal references and reason codes, not raw documents, patient identifiers or unrestricted feature vectors. Data minimisation applies to logs, errors and traces too.
 
@@ -175,9 +190,9 @@ Store event schema/hash versions, canonical bytes or reproducible canonical repr
 
 Measure active staff effort through explicit sessions with pause, resume and inactivity handling. Allow observed offline effort entry with source, estimated effort and unknown effort as separate categories. Do not substitute elapsed queue time for active labour or unknown values with zero.
 
-Report verified completion time, active staff minutes, correction rate, unresolved execution rate and workload by cohort. Define baseline and pilot inclusion rules before comparing. Never present automatic transport after human approval as a fully unattended referral. The ACCEPTANCE document specifies the reporting checks.
+Report referral-to-booking conversion, time to destination commitment, time to booking, active staff minutes, contacts, status enquiries, correction rate, unresolved execution rate and workload by cohort. Define the denominator, inclusion rules and baseline before comparing. Keep observed, derived, estimated and unknown outcomes distinguishable. Never present automatic transport after human approval as a fully unattended referral or infer realised revenue without customer-supplied economics. The ACCEPTANCE document specifies the reporting checks.
 
-## 14. Operational defaults
+## 15. Operational defaults
 
 Use bounded worker concurrency and jittered scheduling. Initial limits are one OCR job per worker and two connector operations per tenant, with one unresolved dependent operation per referral. Capability contracts can lower these limits. Queue saturation produces an explicit retryable capacity response or durable backlog status, never silent loss.
 
@@ -187,8 +202,8 @@ Set HTTP and processing timeouts explicitly, and distinguish a client deadline f
 
 Backups, Storage recovery, retention and rollback follow DEPLOYMENT. They are part of the release criteria, not implications of choosing a managed database.
 
-## 15. Scope deferred
+## 16. Scope deferred
 
-Defer remote Inntris enforcement, remote LLM extraction, a deidentification vault service, WhatsApp, inbound email infrastructure, additional PMS adapters, patient merge, autonomous identity linkage, outbound chases, appointment scheduling, multi region failover and per tenant pods.
+Defer remote Inntris enforcement, remote LLM extraction, a deidentification vault service, WhatsApp, voice, inbound email infrastructure, additional PMS adapters, patient merge, autonomous identity linkage, outbound chases, appointment search/booking, slot optimisation, insurance authorisation, clinical triage, billing, multi region failover and per tenant pods.
 
 Do not defer tenant constraints, authentication, private file handling, source provenance, durable uncertainty, current approval enforcement, result retention or manual investigation. These are included in the first working workflow.

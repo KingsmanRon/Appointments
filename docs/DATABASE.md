@@ -1,4 +1,4 @@
-# ACCESS v1 database
+# ACCESS v1.1 database
 
 Status: final reference design for the build. `database/schema.sql` is executable PostgreSQL DDL for an empty development database. It is not a deployed Supabase migration and does not implement the application command handlers. The build must implement the transaction contracts below and pass the acceptance suite before enabling a real connector.
 
@@ -12,6 +12,8 @@ Status: final reference design for the build. `database/schema.sql` is executabl
 6. Runtime groups receive scoped table privileges because the core is a trusted modular monolith. RLS enforces the database tenant boundary; command handlers enforce human permissions, module ownership and business transitions. This reference does not claim that arbitrary SQL executed with a stolen tenant API credential respects the human approval rules.
 7. All external writes require explicit approval of an immutable executable action. Each dispatch opportunity receives a new grant and attempt. Approval, current authority, grant consumption and durable start are checked in one short transaction. Foreign network calls happen after commit.
 8. Use UTC `timestamptz`, server generated UUIDs, positive `bigint` aggregate versions and integer durations with explicit units. JSONB holds versioned canonical payloads or bounded evidence; it does not replace indexed workflow columns.
+9. `access_cases` is the platform aggregate. `referrals` is the v1 one-to-one case extension. Generic work, execution, timers, evidence and effort carry `case_id`; referral-specific verification and identity records retain `referral_id`.
+10. A destination execution reaching `COMMITTED` is not a completed access case. Immutable case outcomes separately record booking, closure and unknown status.
 
 Supabase documents its [database roles](https://supabase.com/docs/guides/database/postgres/roles), [RLS behaviour](https://supabase.com/docs/guides/database/postgres/row-level-security) and [connection options](https://supabase.com/docs/guides/database/connecting-to-postgres). This design deliberately adds a tenant database identity boundary to the trusted API layer.
 
@@ -60,6 +62,7 @@ Every table below lives in `access`, uses tenant RLS, and is owned by the provis
 | Integration | `integrations` | Destination account and environment, enable flag and current immutable mapping/capability pointers. Contains no secret. |
 | Integration | `capability_snapshots` | Immutable operation capability manifest and verification evidence reference. A manifest with no verified evidence cannot enable an operation. |
 | Integration | `mapping_versions` | Immutable mapping definition, version and digest. A changed mapping creates a new row. |
+| Rules | `access_rule_sets` | Immutable customer-owned operational requirements for completeness, routing, follow-up and closure. Separate from authority policy and destination mapping. |
 | Integration | `executors` | Authenticated connector subject, integration binding, active status and credential version reference. |
 | Intake | `raw_artifacts` | Durable upload reservation, quarantine object path, accepted object path, expected and observed checksum, size, MIME, scan evidence and retention date. Accepted content identity is immutable. |
 | Intake | `documents` | A document derived from one accepted artifact and its extraction processing state. |
@@ -68,7 +71,10 @@ Every table below lives in `access`, uses tenant RLS, and is owned by the provis
 | Identity | `patients` | Local patient projection and version. Canonical demographics are sensitive. |
 | Identity | `patient_identifiers` | Namespaced identifier, normalisation and HMAC key version, keyed digest, optional encrypted value and verification evidence. A partial unique index prevents two local verified records claiming the same keyed identity. |
 | Identity | `external_patient_refs` | Proven patient binding to a destination account and external reference. |
-| Workflow | `referrals` | Aggregate state, version, workflow generation, current verification/identity decisions and completion provenance. `document_id` is the primary source; the join table lists all sources. |
+| Case | `access_cases` | Stable patient-access aggregate, case type, source channel, rule binding and high-level outcome state. Only REFERRAL is enabled in v1.1. |
+| Case | `access_interactions` | Append-only inbound, outbound and internal touches with intent, channel, actor class and identity-verification level. |
+| Case | `case_outcomes` | Append-only booking or closure observations with source, evidence and measurement kind. Unknown status remains unresolved. |
+| Workflow | `referrals` | Referral extension state, version, workflow generation, current verification/identity decisions and completion provenance. `COMMITTED` is non-terminal. `document_id` is the primary source; the join table lists all sources. |
 | Workflow | `referral_documents` | All source documents associated with a referral. |
 | Verification | `verification_sets` | Immutable human verification of a canonical payload digest and exact source version. |
 | Verification | `confirmed_fields` | Accepted field values and evidence within a verification set, optionally linked to an extracted field. Manually entered values require explicit source evidence. |
@@ -84,18 +90,18 @@ Every table below lives in `access`, uses tenant RLS, and is owned by the provis
 | Execution | `execution_attempts` | One authorised dispatch opportunity, unique start request and invocation owner, dispatch deadline, call deadline and immutable retry basis. At most one STARTED attempt per execution. |
 | Results | `inbox_observations` | Immutable authenticated source observation and digest, independently deduplicated by destination subject and message ID. |
 | Results | `observation_applications` | Exactly one application receipt per observation, including duplicate, untrusted or conflict review outcomes. |
-| Work | `work_items` | Human queue projection with assignment, due date and optimistic version. Same referral as any linked execution. |
+| Work | `work_items` | Human queue projection with case, assignment, due date and optimistic version. Same case/referral as any linked execution. |
 | Work | `work_item_resolutions` | Append only resolution and source evidence; corrections point to the previous resolution. |
 | Manual | `manual_preparations` | Immutable human approved prepared action, exact hash, destination, verification and safety basis linked to one work item. Prior uncertainty requires conclusive no effect evidence before preparation. |
 | Manual | `manual_attestations` | Immutable human completion observations bound to the prepared action, external reference, actor and source evidence. Corrections append another observation and require reconciliation. |
 | Jobs | `outbox` | Transactional job intent, stable dedupe key, sequence, lane, due time and renewable notification lease. A lease is not execution permission. |
-| Jobs | `timers` | Due workflow callback bound to its workflow generation, with stable dedupe key. |
+| Jobs | `timers` | Due case/workflow callback bound to its workflow generation, with stable dedupe key. |
 | Evidence | `event_chain_heads` | One tenant sequence and last digest, locked before event append. |
-| Evidence | `events` | Append only tenant sequence, envelope version, causal references, actor/subject, reasons, measurements, timestamps and chain digests. Referral is nullable for authority events. |
+| Evidence | `events` | Append only tenant sequence, envelope version, case/referral references, causal references, actor/subject, reasons, measurements, timestamps and chain digests. Case is nullable for authority events. |
 | Evidence | `evidence_checkpoints` | Signed tenant event head exported to an independently controlled location, including key reference and signature. |
 | Measurement | `effort_sessions` | Observed, estimated or unknown human work, explicit activity and seconds. Null unknown duration is distinct from zero. |
 | Measurement | `baseline_cohorts` | Time window, inclusion rules and measurement method. |
-| Measurement | `baseline_observations` | Immutable baseline cases and evidence, including measured/estimated/unknown handling and completion durations. |
+| Measurement | `baseline_observations` | Immutable baseline cases and evidence, including measured/estimated/unknown handling, durations, corrections, staff contacts, status enquiries, booking and closure. |
 
 `authz.database_principals` is global bootstrap configuration, not a domain table. Runtime roles cannot read or change it directly. The narrow lookup function returns only the enabled mapping for the database's actual session identity.
 
@@ -121,11 +127,12 @@ The fixed lock order is:
 
 1. Tenant row.
 2. Existing identity claims and aliases in stable namespace/key/digest order.
-3. Referral rows sorted by ID.
-4. Execution rows sorted by ID.
-5. Grants and approvals sorted by ID.
-6. Attempt and outbox rows sorted by ID.
-7. Tenant event chain head immediately before append.
+3. Access case rows sorted by ID.
+4. Referral rows sorted by ID.
+5. Execution rows sorted by ID.
+6. Grants and approvals sorted by ID.
+7. Attempt and outbox rows sorted by ID.
+8. Tenant event chain head immediately before append.
 
 Never hold a later lock while requesting an earlier one. The pilot tenant guard intentionally serialises authority sensitive transactions, favouring auditability over maximum write throughput. Transactions must be short and contain no foreign I/O, OCR or model call.
 
@@ -188,4 +195,4 @@ Create actual migration files with the Supabase CLI after inspecting its current
 
 ## 10. Validation status
 
-The final reference DDL loaded successfully on isolated PostgreSQL 18.1. All 42 domain tables have ENABLE and FORCE RLS. The supplied storage/security smoke suite passed 37 checks using real tenant LOGIN sessions. Detailed results and scope are in VALIDATION.md and database/validation_result.json. No remote Supabase project has been created or modified. See ACCEPTANCE for the application gates, including concurrent workflow/start tests that cannot run until the command handlers exist.
+The v1.1 reference contains 46 domain tables and parses as PostgreSQL syntax. Its updated real-PostgreSQL smoke suite is present but has not been run in this review workspace because no PostgreSQL server is installed. The retained 42-table, 37-check PostgreSQL 18.1 result applies only to the superseded v1 schema hash. Detailed scope is in VALIDATION.md. No remote Supabase project has been created or modified. See ACCEPTANCE for the application gates, including concurrent workflow/start tests that cannot run until the command handlers exist.

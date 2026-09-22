@@ -1,21 +1,23 @@
-# ACCESS v1 build pack
+# ACCESS v1.1 patient-access build pack
 
-Status: architecture finalised for implementation. This pack consolidates the two proposals and the review corrections. It specifies the product, database and execution boundaries. It does not claim that the application or a hosted environment already exists.
+Status: review candidate before application implementation. This pack defines ACCESS Referral Operations as a standalone patient-access orchestration product. It specifies the market problem, product boundary, database and execution contracts. It does not claim that the application, connector or hosted environment already exists.
 
-Finalised: 21 September 2026. Platform documentation was checked on 20 September 2026.
+Revised: 22 September 2026. The revision aligns the product with the patient-access transformation thesis and adds closed-loop outcomes, generic cases, operational rules and competitive positioning.
 
 ## Read in this order
 
-1. [Architecture](docs/ARCHITECTURE.md): final platform, product and trust decisions.
-2. [Database](docs/DATABASE.md): table ownership, tenant roles and transaction rules.
-3. [Reference SQL](database/schema.sql): executable database definition to turn into Supabase migrations during the build.
-4. [Contracts](docs/CONTRACTS.md): API, identity, execution, policy and connector behaviour.
-5. [Acceptance](docs/ACCEPTANCE.md): tests that determine whether the implementation is correct.
-6. [Deployment](docs/DEPLOYMENT.md): Supabase, Vercel and Railway setup and operational gates.
-7. [Build plan](docs/BUILD_PLAN.md): ordered implementation milestones and completion evidence.
-8. [GPT6 Astra build prompt](BUILD_PROMPT.md): give this prompt and the entire pack to the builder.
-9. [Validation](docs/VALIDATION.md): checks actually completed on this pack and remaining hosted checks.
-10. [Configuration templates](config/): placeholders separated by service; no credentials are included.
+1. [Whitepaper alignment](docs/WHITEPAPER_ALIGNMENT.md): BCG thesis, buyer, product scope, pilot and funding proof sequence.
+2. [Competitive analysis](docs/COMPETITIVE_ANALYSIS.md): closest global and South African products, defensible wedge and discovery tests.
+3. [Architecture](docs/ARCHITECTURE.md): platform, product and trust decisions.
+4. [Database](docs/DATABASE.md): table ownership, tenant roles and transaction rules.
+5. [Reference SQL](database/schema.sql): executable database definition to turn into Supabase migrations during the build.
+6. [Contracts](docs/CONTRACTS.md): case, referral, API, identity, execution, outcome, policy and connector behaviour.
+7. [Acceptance](docs/ACCEPTANCE.md): tests that determine whether the implementation is correct.
+8. [Deployment](docs/DEPLOYMENT.md): Supabase, Vercel and Railway setup and operational gates.
+9. [Build plan](docs/BUILD_PLAN.md): ordered implementation milestones and completion evidence.
+10. [GPT6 Astra build prompt](BUILD_PROMPT.md): give this prompt and the entire pack to the builder.
+11. [Validation](docs/VALIDATION.md): checks actually completed on this pack and remaining hosted checks.
+12. [Configuration templates](config/): placeholders separated by service; no credentials are included.
 
 ## Fixed platform
 
@@ -29,7 +31,7 @@ Finalised: 21 September 2026. Platform documentation was checked on 20 September
 | Staff authentication | Supabase Auth |
 | Private documents | Supabase Storage |
 
-The first real destination is DTM. Its actual API must be inspected and qualified; no endpoint, permission, idempotency behaviour or deployment status is assumed. A deterministic mock supports development and failure testing. Manual resolution is part of the product.
+The first enabled case type is referral. The first real destination is DTM. Its actual API must be inspected and qualified; no endpoint, permission, idempotency behaviour or deployment status is assumed. A deterministic mock supports development and failure testing. Manual resolution is part of the product. A destination commit does not count as a booking; the case remains open until a booking or supported closure is evidenced.
 
 ## Precedence
 
@@ -37,6 +39,6 @@ The documents in this pack replace the pasted proposals. Architecture and contra
 
 Application command handlers, deployment configuration, real connector adapters and release tests are builder deliverables. Applying the SQL alone does not implement the workflow or the authority boundary.
 
-## Workspace state
+## Implementation hold point
 
-The workspace initially contained an empty Git repository with no commits and no remote. Consolidation here means merging the proposals into these documents. There was no existing implementation branch to merge or deployed database to migrate.
+Review and approve the product thesis, first design-partner profile, pilot outcome contract, case/outcome model and competitive wedge before starting the application build. The existing GitHub `main` branch contains only the initial README/licence commit; this pack lives on an architecture branch and is not a runnable application.

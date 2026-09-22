@@ -1,16 +1,18 @@
-# ACCESS implementation plan
+# ACCESS v1.1 implementation plan
 
-The builder implements this pack. Each milestone ends with working software and recorded evidence. Continue through all milestones that can run locally; missing hosted credentials must not stop independent implementation.
+The builder implements this pack after the product hold point is approved. Each milestone ends with working software and recorded evidence. Continue through all milestones that can run locally; missing hosted credentials must not stop independent implementation.
 
 ## Milestone 0. Establish the workspace
 
 1. Read all pack documents and any repository AGENTS.md instructions.
-2. Inspect the actual repository, branch, working tree, existing DTM source and available tooling without altering unrelated work.
-3. Create a codex/ prefixed implementation branch when supported by the repository state. Do not invent an existing Git remote.
-4. Scaffold the monorepo, lock compatible dependencies, establish typecheck/lint/unit/real PostgreSQL test commands and create synthetic fixtures.
-5. Record the exact runtime versions and the PostgreSQL major available in the selected Supabase project. Validate on that major as well as any local reference environment.
+2. Confirm one design partner, one service line, the first intake channel, economic buyer, destination route and pilot outcome contract from WHITEPAPER_ALIGNMENT.
+3. Record an observed baseline for referral volume, booking conversion, completion time, staff effort, corrections, contacts and unknown outcomes. Unknown data remains unknown.
+4. Inspect the actual repository, branch, working tree, existing DTM source and available tooling without altering unrelated work.
+5. Create a codex/ prefixed implementation branch when supported by the repository state. Do not invent an existing Git remote.
+6. Scaffold the monorepo, lock compatible dependencies, establish typecheck/lint/unit/real PostgreSQL test commands and create synthetic fixtures.
+7. Record the exact runtime versions and the PostgreSQL major available in the selected Supabase project. Validate on that major as well as any local reference environment.
 
-Done: deterministic install and CI entry points; no credentials in files; documented initial state.
+Done: approved pilot definition and baseline, deterministic install and CI entry points, no credentials in files, and documented initial state. Product discovery can block a live pilot without blocking the connector-independent synthetic build.
 
 ## Milestone 1. Database and authentication foundation
 
@@ -18,14 +20,14 @@ Done: deterministic install and CI entry points; no credentials in files; docume
 2. Implement transaction helpers, tenant connection registry and bounded pools. Every tenant pool verifies session_user against the protected mapping on connection.
 3. Implement Auth JWT verification, current membership/role checks and allowed origin handling.
 4. Implement the controlled tenant/bootstrap provisioning procedure with separate runtime identities. Keep privileged credentials out of application services.
-5. Implement append events and commands deduplication inside transactions. Build typed database access.
+5. Implement access cases, interactions, versioned access rules, case outcomes, append events and command deduplication inside transactions. Build typed database access.
 6. Run tenant isolation, composite foreign key, invalid state, immutable record and unauthorised role tests on real PostgreSQL using actual runtime login identities.
 
 Done: an authenticated user can only access their tenant; forbidden database identity substitution and role changes fail.
 
 ## Milestone 2. Upload, extraction and review
 
-1. Build login, referral list, upload and referral detail screens.
+1. Build login, case/referral list, upload and case detail screens with interaction and outcome timelines.
 2. Implement signed direct private upload, completion command, quarantine and worker verification.
 3. Implement scanner and bounded local parser/OCR with source spans. Preserve original documents.
 4. Build field confirmation, identity candidates and completeness review. Display source beside each critical value.
@@ -36,12 +38,13 @@ Done: synthetic PDF and image referrals reach a complete, human confirmed canoni
 
 ## Milestone 3. Workflow and durable execution
 
-1. Implement the defined referral and execution state machines, identity claims and sequence prerequisites.
+1. Implement the defined case, referral and execution state machines, identity claims and sequence prerequisites.
 2. Implement immutable mapping/action hashing and approval review.
 3. Implement local policy, grant issuing and atomic authorise_and_start under the authority guard.
 4. Implement outbox, attempts, one use dispatch permission, result inbox, timers and reconciliation.
 5. Implement cancellation, revocation and membership changes under the same lock order.
 6. Implement uncertain outcome investigation separately from safe prepared manual completion.
+7. Keep destination `COMMITTED` non-terminal. Implement ready-for-booking, booking follow-up and enumerated closure outcomes without building autonomous scheduling.
 
 Done: the mock executes the full workflow, including timeout, duplicate callback, delayed commit, crash recovery and revocation races, with the expected durable state.
 
@@ -58,7 +61,7 @@ Done: at least the agreed referral completion operation is demonstrated against 
 
 ## Milestone 5. Evidence, reporting and recovery
 
-1. Implement the minimal dashboards and distinguish observed, estimated and unknown effort.
+1. Implement the minimal dashboards for referral-to-booking conversion, destination commitment, booking time, leakage, contacts and workload; distinguish observed, derived, estimated and unknown values.
 2. Establish a baseline cohort and report definitions without fabricated savings.
 3. Verify event chains, independently retained checkpoints and conflict investigation.
 4. Implement protected logs, monitoring, retention jobs and reconciliation alerts.
@@ -78,6 +81,6 @@ Done: local build complete, staging acceptance complete when access is available
 
 ## Definition of build completion
 
-The local application includes a working staff UI, real PostgreSQL integration, durable workers, mock connector failure suite, manual paths, local extraction, DTM adapter, metrics and documented operations. It is not a collection of empty routes, mocked screens or TODO comments.
+The local application includes a working staff UI, real PostgreSQL integration, durable workers, mock connector failure suite, manual paths, local extraction, DTM adapter, case outcomes, closed-loop referral metrics and documented operations. It is not a collection of empty routes, mocked screens or TODO comments.
 
 The DTM and production gates remain separate from local completion. Do not stop after scaffolding or one milestone. Do not invent credentials, capability guarantees or live success to conceal a missing external dependency.

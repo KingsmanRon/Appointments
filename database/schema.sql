@@ -1,4 +1,4 @@
--- ACCESS v1 reference schema. Apply only to an empty development database.
+-- ACCESS v1.1 reference schema. Apply only to an empty development database.
 -- Requires a provisioning connection with CREATEROLE and schema creation rights.
 -- This is reference DDL, not a Supabase migration or deployed application.
 -- PostgreSQL 17+; no extension dependency; credentials are provisioned separately.
@@ -130,6 +130,27 @@ CREATE TABLE access.mapping_versions (
   UNIQUE (org_id, integration_id, mapping_id),
   UNIQUE (org_id, integration_id, version),
   FOREIGN KEY (org_id, integration_id) REFERENCES access.integrations(org_id, integration_id)
+);
+
+-- Operational access rules answer questions such as required referral fields,
+-- destination routing and follow-up timing. They are deliberately separate
+-- from policy_versions, which answer whether an actor may execute an action.
+CREATE TABLE access.access_rule_sets (
+  org_id uuid NOT NULL,
+  rule_set_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  version text NOT NULL,
+  status text NOT NULL CHECK (status IN ('DRAFT','PUBLISHED','RETIRED')),
+  definition jsonb NOT NULL CHECK (jsonb_typeof(definition) = 'object'),
+  definition_hash access.sha256 NOT NULL,
+  published_by uuid,
+  published_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (org_id, rule_set_id),
+  UNIQUE (org_id, version),
+  FOREIGN KEY (org_id) REFERENCES access.tenants(org_id),
+  FOREIGN KEY (org_id, published_by) REFERENCES access.memberships(org_id, user_id),
+  CHECK ((status = 'DRAFT' AND published_by IS NULL AND published_at IS NULL) OR
+         (status <> 'DRAFT' AND published_by IS NOT NULL AND published_at IS NOT NULL))
 );
 ALTER TABLE access.integrations ADD CONSTRAINT integrations_capability_fk
   FOREIGN KEY (org_id, integration_id, current_capability_id)
@@ -289,15 +310,69 @@ CREATE TABLE access.external_patient_refs (
   FOREIGN KEY (org_id, integration_id) REFERENCES access.integrations(org_id, integration_id)
 );
 
+-- A case is the stable patient-access aggregate. V1 enables REFERRAL only,
+-- while the type namespace prevents referral-specific infrastructure from
+-- becoming the permanent platform boundary.
+CREATE TABLE access.access_cases (
+  org_id uuid NOT NULL,
+  case_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_type text NOT NULL CHECK (case_type IN
+    ('REFERRAL','APPOINTMENT_REQUEST','STATUS_ENQUIRY','CANCELLATION_REQUEST',
+     'RESCHEDULING_REQUEST','MISSING_INFORMATION_RESPONSE')),
+  source_channel text NOT NULL CHECK (source_channel IN
+    ('STAFF_UPLOAD','PARTNER_API','EMAIL','WHATSAPP','VOICE','PORTAL')),
+  state text NOT NULL DEFAULT 'OPEN' CHECK (state IN
+    ('OPEN','IN_PROGRESS','WAITING','RESOLVED','CLOSED','CANCELLED')),
+  patient_id uuid,
+  current_rule_set_id uuid,
+  version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
+  workflow_generation bigint NOT NULL DEFAULT 1 CHECK (workflow_generation > 0),
+  opened_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  resolved_at timestamptz,
+  resolution_code text,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (org_id, case_id),
+  FOREIGN KEY (org_id) REFERENCES access.tenants(org_id),
+  FOREIGN KEY (org_id, patient_id) REFERENCES access.patients(org_id, patient_id),
+  FOREIGN KEY (org_id, current_rule_set_id) REFERENCES access.access_rule_sets(org_id, rule_set_id),
+  CHECK (state NOT IN ('RESOLVED','CLOSED','CANCELLED') OR
+         (resolved_at IS NOT NULL AND resolution_code IS NOT NULL))
+);
+CREATE INDEX access_cases_queue_idx ON access.access_cases(org_id, state, opened_at);
+
+CREATE TABLE access.access_interactions (
+  org_id uuid NOT NULL,
+  interaction_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,
+  channel text NOT NULL CHECK (channel IN
+    ('STAFF_UPLOAD','PARTNER_API','EMAIL','WHATSAPP','VOICE','PORTAL','INTERNAL')),
+  direction text NOT NULL CHECK (direction IN ('INBOUND','OUTBOUND','INTERNAL')),
+  actor_kind text NOT NULL CHECK (actor_kind IN ('PATIENT','STAFF','PARTNER','SYSTEM','UNKNOWN')),
+  actor_ref text,
+  intent text NOT NULL,
+  identity_verification_level text NOT NULL CHECK (identity_verification_level IN
+    ('NONE','CLAIMED','MATCHED','VERIFIED')),
+  content_reference jsonb NOT NULL CHECK (jsonb_typeof(content_reference) = 'object'),
+  occurred_at timestamptz NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (org_id, interaction_id),
+  UNIQUE (org_id, case_id, interaction_id),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id)
+);
+CREATE INDEX access_interactions_timeline_idx
+  ON access.access_interactions(org_id, case_id, occurred_at);
+
 CREATE TABLE access.referrals (
   org_id uuid NOT NULL REFERENCES access.tenants(org_id),
   referral_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,
   document_id uuid,
   extraction_id uuid,
   patient_id uuid,
   state text NOT NULL DEFAULT 'RECEIVED' CHECK (state IN
     ('RECEIVED','EXTRACTING','REVIEW_REQUIRED','READY','AWAITING_APPROVAL','COMMIT_PENDING',
-     'RECONCILING','MANUAL_PENDING','COMMITTED','CLOSED','CANCELLED')),
+     'RECONCILING','MANUAL_PENDING','COMMITTED','READY_FOR_BOOKING','WAITING_FOR_BOOKING',
+     'BOOKED','CLOSED','CANCELLED')),
   version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
   structured_data jsonb NOT NULL DEFAULT '{}'::jsonb,
   current_verification_set_id uuid,
@@ -307,12 +382,43 @@ CREATE TABLE access.referrals (
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   completed_at timestamptz,
   PRIMARY KEY (org_id, referral_id),
+  UNIQUE (org_id, case_id),
+  UNIQUE (org_id, case_id, referral_id),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id),
   FOREIGN KEY (org_id, document_id) REFERENCES access.documents(org_id, document_id),
   FOREIGN KEY (org_id, document_id, extraction_id) REFERENCES access.extractions(org_id, document_id, extraction_id),
   FOREIGN KEY (org_id, patient_id) REFERENCES access.patients(org_id, patient_id),
-  CHECK (state NOT IN ('COMMITTED','CLOSED') OR (completed_at IS NOT NULL AND completion_source IS NOT NULL))
+  CHECK (state NOT IN ('BOOKED','CLOSED','CANCELLED') OR
+         (completed_at IS NOT NULL AND completion_source IS NOT NULL))
 );
 CREATE INDEX referrals_queue_idx ON access.referrals(org_id, state, created_at);
+
+-- Case outcomes are observations, not mutable flags. COMMITTED on a referral
+-- means a destination write was confirmed; it does not imply that a booking
+-- was obtained or that the access case succeeded.
+CREATE TABLE access.case_outcomes (
+  org_id uuid NOT NULL,
+  outcome_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,
+  outcome_type text NOT NULL CHECK (outcome_type IN
+    ('READY_FOR_BOOKING','APPOINTMENT_BOOKED','PATIENT_UNREACHABLE','PATIENT_DECLINED',
+     'PROVIDER_DECLINED','DUPLICATE_REFERRAL','INVALID_REFERRAL','REFERRED_ELSEWHERE',
+     'CANCELLED','UNKNOWN_STATUS')),
+  source_type text NOT NULL CHECK (source_type IN ('CONNECTOR','HUMAN','IMPORT','SYSTEM')),
+  measurement_kind text NOT NULL CHECK (measurement_kind IN
+    ('OBSERVED','DERIVED','ESTIMATED','UNKNOWN')),
+  external_reference text,
+  evidence jsonb NOT NULL CHECK (jsonb_typeof(evidence) = 'object'),
+  observed_at timestamptz NOT NULL,
+  recorded_by uuid,
+  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (org_id, outcome_id),
+  UNIQUE (org_id, case_id, outcome_id),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id),
+  FOREIGN KEY (org_id, recorded_by) REFERENCES access.memberships(org_id, user_id),
+  CHECK (source_type <> 'HUMAN' OR recorded_by IS NOT NULL)
+);
+CREATE INDEX case_outcomes_timeline_idx ON access.case_outcomes(org_id, case_id, observed_at);
 
 CREATE TABLE access.referral_documents (
   org_id uuid NOT NULL,
@@ -410,6 +516,7 @@ ALTER TABLE access.tenants ADD CONSTRAINT tenants_current_policy_fk
 CREATE TABLE access.executions (
   org_id uuid NOT NULL,
   execution_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,
   referral_id uuid NOT NULL,
   verification_set_id uuid NOT NULL,
   identity_decision_id uuid NOT NULL,
@@ -432,11 +539,15 @@ CREATE TABLE access.executions (
   external_result jsonb,
   committed_at timestamptz,
   PRIMARY KEY (org_id, execution_id),
+  UNIQUE (org_id, case_id, execution_id),
   UNIQUE (org_id, referral_id, sequence_number),
   UNIQUE (org_id, integration_id, idempotency_key),
   UNIQUE (org_id, integration_id, execution_id),
   UNIQUE (org_id, referral_id, execution_id),
   UNIQUE (org_id, execution_id, action_hash),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id),
+  FOREIGN KEY (org_id, case_id, referral_id)
+    REFERENCES access.referrals(org_id, case_id, referral_id),
   FOREIGN KEY (org_id, referral_id) REFERENCES access.referrals(org_id, referral_id),
   FOREIGN KEY (org_id, referral_id, verification_set_id)
     REFERENCES access.verification_sets(org_id, referral_id, verification_set_id),
@@ -623,18 +734,24 @@ CREATE TABLE access.observation_applications (
 CREATE TABLE access.work_items (
   org_id uuid NOT NULL,
   work_item_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,
   referral_id uuid NOT NULL,
   execution_id uuid,
   kind text NOT NULL CHECK (kind IN
     ('SOURCE_VERIFICATION','IDENTITY_REVIEW','MISSING_INFORMATION','SAFE_MANUAL_COMMIT',
-     'UNCERTAIN_EXECUTION','EXECUTION_FAILURE','EVIDENCE_CONFLICT','APPROVAL')),
+     'UNCERTAIN_EXECUTION','EXECUTION_FAILURE','EVIDENCE_CONFLICT','APPROVAL',
+     'OUTCOME_FOLLOW_UP','STATUS_REVIEW')),
   state text NOT NULL DEFAULT 'OPEN' CHECK (state IN ('OPEN','ASSIGNED','RESOLVED','CANCELLED')),
   assigned_user_id uuid,
   version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
   due_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (org_id, work_item_id),
+  UNIQUE (org_id, case_id, work_item_id),
   UNIQUE (org_id, referral_id, work_item_id),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id),
+  FOREIGN KEY (org_id, case_id, referral_id)
+    REFERENCES access.referrals(org_id, case_id, referral_id),
   FOREIGN KEY (org_id, referral_id) REFERENCES access.referrals(org_id, referral_id),
   FOREIGN KEY (org_id, referral_id, execution_id) REFERENCES access.executions(org_id, referral_id, execution_id),
   FOREIGN KEY (org_id, assigned_user_id) REFERENCES access.memberships(org_id, user_id)
@@ -702,6 +819,7 @@ CREATE TABLE access.work_item_resolutions (
 CREATE TABLE access.outbox (
   org_id uuid NOT NULL,
   outbox_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid,
   referral_id uuid,
   artifact_id uuid,
   execution_id uuid,
@@ -720,15 +838,18 @@ CREATE TABLE access.outbox (
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (org_id, outbox_id),
   UNIQUE (org_id, dedupe_key),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id),
   UNIQUE (org_id, referral_id, sequence_number),
   FOREIGN KEY (org_id) REFERENCES access.tenants(org_id),
   FOREIGN KEY (org_id, artifact_id) REFERENCES access.raw_artifacts(org_id, artifact_id),
+  FOREIGN KEY (org_id, case_id, referral_id)
+    REFERENCES access.referrals(org_id, case_id, referral_id),
   FOREIGN KEY (org_id, referral_id) REFERENCES access.referrals(org_id, referral_id),
   FOREIGN KEY (org_id, referral_id, execution_id) REFERENCES access.executions(org_id, referral_id, execution_id),
-  CHECK ((effect_type = 'VERIFY_UPLOAD' AND artifact_id IS NOT NULL AND execution_id IS NULL AND lane = 'LOCAL') OR
-    (effect_type = 'EXTRACT_DOCUMENT' AND referral_id IS NOT NULL AND execution_id IS NULL AND lane = 'LOCAL') OR
-    (effect_type = 'DISPATCH_EXECUTION' AND referral_id IS NOT NULL AND execution_id IS NOT NULL AND lane = 'WRITE') OR
-    (effect_type IN ('RECONCILE_EXECUTION','APPLY_OBSERVATION') AND referral_id IS NOT NULL AND execution_id IS NOT NULL AND lane = 'RECOVERY')),
+  CHECK ((effect_type = 'VERIFY_UPLOAD' AND case_id IS NULL AND referral_id IS NULL AND artifact_id IS NOT NULL AND execution_id IS NULL AND lane = 'LOCAL') OR
+    (effect_type = 'EXTRACT_DOCUMENT' AND case_id IS NOT NULL AND referral_id IS NOT NULL AND execution_id IS NULL AND lane = 'LOCAL') OR
+    (effect_type = 'DISPATCH_EXECUTION' AND case_id IS NOT NULL AND referral_id IS NOT NULL AND execution_id IS NOT NULL AND lane = 'WRITE') OR
+    (effect_type IN ('RECONCILE_EXECUTION','APPLY_OBSERVATION') AND case_id IS NOT NULL AND referral_id IS NOT NULL AND execution_id IS NOT NULL AND lane = 'RECOVERY')),
   CHECK (state <> 'LEASED' OR (lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_until IS NOT NULL))
 );
 CREATE INDEX outbox_dispatch_idx ON access.outbox(org_id, available_at, created_at)
@@ -737,6 +858,7 @@ CREATE INDEX outbox_dispatch_idx ON access.outbox(org_id, available_at, created_
 CREATE TABLE access.timers (
   org_id uuid NOT NULL,
   timer_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,
   referral_id uuid NOT NULL,
   timer_kind text NOT NULL,
   workflow_generation bigint NOT NULL CHECK (workflow_generation > 0),
@@ -747,6 +869,9 @@ CREATE TABLE access.timers (
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (org_id, timer_id),
   UNIQUE (org_id, dedupe_key),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id),
+  FOREIGN KEY (org_id, case_id, referral_id)
+    REFERENCES access.referrals(org_id, case_id, referral_id),
   FOREIGN KEY (org_id, referral_id) REFERENCES access.referrals(org_id, referral_id)
 );
 CREATE INDEX timers_due_idx ON access.timers(org_id, due_at) WHERE state = 'PENDING';
@@ -761,6 +886,7 @@ CREATE TABLE access.event_chain_heads (
 CREATE TABLE access.events (
   org_id uuid NOT NULL,
   event_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid,
   referral_id uuid,
   sequence_number bigint NOT NULL CHECK (sequence_number > 0),
   event_type text NOT NULL,
@@ -781,10 +907,13 @@ CREATE TABLE access.events (
   PRIMARY KEY (org_id, event_id),
   UNIQUE (org_id, sequence_number),
   UNIQUE (org_id, sequence_number, event_hash),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id),
+  FOREIGN KEY (org_id, case_id, referral_id)
+    REFERENCES access.referrals(org_id, case_id, referral_id),
   FOREIGN KEY (org_id, referral_id) REFERENCES access.referrals(org_id, referral_id),
   FOREIGN KEY (org_id, command_id) REFERENCES access.commands(org_id, command_id)
 );
-CREATE INDEX events_timeline_idx ON access.events(org_id, referral_id, occurred_at);
+CREATE INDEX events_timeline_idx ON access.events(org_id, case_id, occurred_at);
 
 CREATE TABLE access.evidence_checkpoints (
   org_id uuid NOT NULL,
@@ -803,6 +932,7 @@ CREATE TABLE access.evidence_checkpoints (
 CREATE TABLE access.effort_sessions (
   org_id uuid NOT NULL,
   effort_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,
   referral_id uuid NOT NULL,
   work_item_id uuid,
   user_id uuid NOT NULL,
@@ -814,6 +944,9 @@ CREATE TABLE access.effort_sessions (
   method text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (org_id, effort_id),
+  FOREIGN KEY (org_id, case_id) REFERENCES access.access_cases(org_id, case_id),
+  FOREIGN KEY (org_id, case_id, referral_id)
+    REFERENCES access.referrals(org_id, case_id, referral_id),
   FOREIGN KEY (org_id, referral_id) REFERENCES access.referrals(org_id, referral_id),
   FOREIGN KEY (org_id, work_item_id) REFERENCES access.work_items(org_id, work_item_id),
   FOREIGN KEY (org_id, user_id) REFERENCES access.memberships(org_id, user_id),
@@ -844,6 +977,10 @@ CREATE TABLE access.baseline_observations (
   handling_seconds integer CHECK (handling_seconds >= 0),
   completion_seconds integer CHECK (completion_seconds >= 0),
   corrections integer CHECK (corrections >= 0),
+  staff_contacts integer CHECK (staff_contacts >= 0),
+  status_enquiries integer CHECK (status_enquiries >= 0),
+  booked boolean,
+  closure_reason text,
   source_evidence jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (org_id, observation_id),
@@ -869,12 +1006,12 @@ BEGIN RAISE EXCEPTION 'immutable record: append a new version or correction' USI
 CREATE FUNCTION access.protect_execution_action() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
-  IF ROW(NEW.org_id, NEW.execution_id, NEW.referral_id, NEW.integration_id, NEW.capability_id,
+  IF ROW(NEW.org_id, NEW.execution_id, NEW.case_id, NEW.referral_id, NEW.integration_id, NEW.capability_id,
     NEW.mapping_id, NEW.operation, NEW.action_schema_version, NEW.final_action, NEW.action_hash,
     NEW.verification_set_id, NEW.identity_decision_id, NEW.request_body, NEW.request_body_sha256, NEW.request_body_length_bytes,
     NEW.idempotency_key, NEW.sequence_number, NEW.created_by, NEW.created_at)
     IS DISTINCT FROM
-    ROW(OLD.org_id, OLD.execution_id, OLD.referral_id, OLD.integration_id, OLD.capability_id,
+    ROW(OLD.org_id, OLD.execution_id, OLD.case_id, OLD.referral_id, OLD.integration_id, OLD.capability_id,
     OLD.mapping_id, OLD.operation, OLD.action_schema_version, OLD.final_action, OLD.action_hash,
     OLD.verification_set_id, OLD.identity_decision_id, OLD.request_body, OLD.request_body_sha256, OLD.request_body_length_bytes,
     OLD.idempotency_key, OLD.sequence_number, OLD.created_by, OLD.created_at) THEN
@@ -949,7 +1086,8 @@ CREATE TRIGGER raw_artifacts_accepted_immutable BEFORE UPDATE ON access.raw_arti
   FOR EACH ROW EXECUTE FUNCTION access.protect_accepted_artifact();
 
 DO $$ DECLARE table_name text; BEGIN
-  FOREACH table_name IN ARRAY ARRAY['capability_snapshots','mapping_versions','extractions',
+  FOREACH table_name IN ARRAY ARRAY['capability_snapshots','mapping_versions','access_rule_sets',
+    'access_interactions','case_outcomes','extractions',
     'extraction_fields','commands','policy_versions','inbox_observations','observation_applications',
     'work_item_resolutions','events','evidence_checkpoints','baseline_observations',
     'verification_sets','confirmed_fields','identity_decisions','session_revocations',
@@ -963,7 +1101,8 @@ END $$;
 GRANT SELECT ON ALL TABLES IN SCHEMA access TO access_runtime;
 GRANT INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO access_api_runtime, access_worker_runtime;
 REVOKE INSERT, UPDATE ON access.tenants, access.memberships, access.integrations,
-  access.executors, access.capability_snapshots, access.mapping_versions, access.policy_versions
+  access.executors, access.capability_snapshots, access.mapping_versions,
+  access.access_rule_sets, access.policy_versions
   FROM access_worker_runtime;
 REVOKE INSERT ON access.tenants FROM access_api_runtime;
 -- SELECT FOR UPDATE needs UPDATE privilege on at least one column. A worker

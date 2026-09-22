@@ -1,4 +1,4 @@
-# ACCESS v1 contracts
+# ACCESS v1.1 contracts
 
 Status: normative implementation specification. These contracts describe the target build; they do not claim a running service, a verified DTM endpoint or production acceptance.
 
@@ -6,7 +6,7 @@ Status: normative implementation specification. These contracts describe the tar
 
 Use Node.js and TypeScript for the core, workers and connector runtime. Define each contract once in a shared package using runtime schemas, infer TypeScript types from those schemas, and generate OpenAPI from the same definitions. Reject unknown fields on commands and executable actions. Version incompatible changes explicitly.
 
-V1 accepts authenticated API submissions and staff uploads, extracts text locally, records source spans, requires human verification of critical fields, resolves identity, checks completeness and prepares or performs one referral workflow. It has a mock connector, a manual connector and one DTM adapter. Enable each DTM operation only after its authenticated destination contract is verified. Patient merge, automatic external chase messages, external models and a remote Inntris binding are outside v1.
+V1.1 accepts authenticated API submissions and staff uploads, creates an access case, extracts text locally, records source spans, requires human verification of critical fields, resolves identity, checks completeness and prepares or performs one referral workflow. It then records whether the referral reached booking or a deliberate closure. It has a mock connector, a manual connector and one DTM adapter. Only `REFERRAL` and the selected pilot intake channel are enabled. Enable each DTM operation only after its authenticated destination contract is verified. Patient merge, automatic external chase messages, external models, autonomous scheduling and a remote Inntris binding are outside v1.1.
 
 UUIDs are server generated identifiers. Times are RFC 3339 UTC instants. Durations are integer milliseconds unless a field explicitly says otherwise. Calendar dates use `YYYY-MM-DD` without timezone conversion. Never infer a date, identifier, urgency or clinical fact that the source does not establish. An omitted optional field means unknown; `null` means explicit absence only where the schema permits it.
 
@@ -14,7 +14,62 @@ No clinical record or raw identifier belongs in a URL, ordinary log, metric labe
 
 ## 2. Canonical data
 
-### 2.1 PatientV1
+### 2.1 AccessCaseV1, interaction and outcome
+
+```ts
+type AccessCaseV1 = {
+  schema: "access.case.v1";
+  case_id: string;
+  case_type: "referral";
+  source_channel: "staff_upload" | "partner_api";
+  state: "open" | "in_progress" | "waiting" | "resolved" | "closed" | "cancelled";
+  version: number;
+  current_rule_set_id?: string;
+  patient_id?: string;
+  opened_at: string;
+  resolved_at?: string;
+  resolution_code?: string;
+};
+
+type AccessInteractionV1 = {
+  schema: "access.interaction.v1";
+  interaction_id: string;
+  case_id: string;
+  channel: "staff_upload" | "partner_api" | "internal";
+  direction: "inbound" | "outbound" | "internal";
+  actor_kind: "patient" | "staff" | "partner" | "system" | "unknown";
+  intent: string;
+  identity_verification_level: "none" | "claimed" | "matched" | "verified";
+  content_ref: string;
+  occurred_at: string;
+};
+
+type CaseOutcomeV1 = {
+  schema: "access.case_outcome.v1";
+  outcome_id: string;
+  case_id: string;
+  type:
+    | "ready_for_booking"
+    | "appointment_booked"
+    | "patient_unreachable"
+    | "patient_declined"
+    | "provider_declined"
+    | "duplicate_referral"
+    | "invalid_referral"
+    | "referred_elsewhere"
+    | "cancelled"
+    | "unknown_status";
+  source: "connector" | "human" | "import" | "system";
+  measurement_kind: "observed" | "derived" | "estimated" | "unknown";
+  external_reference?: string;
+  evidence_ref: string;
+  observed_at: string;
+};
+```
+
+The database reserves additional case types and channels for later versions; this API rejects them in v1.1. Interactions and outcomes are immutable observations. An `unknown_status` outcome leaves the case unresolved. Only an accepted `appointment_booked` outcome enters the booking numerator. A deliberate closure uses one enumerated resolution code and retains its source.
+
+### 2.2 PatientV1
 
 ```ts
 type PatientV1 = {
@@ -40,11 +95,12 @@ type PatientV1 = {
 
 Keep original spelling and the original extracted value in provenance. Apply documented comparison normalisation separately. The issuer identifies the identifier namespace, including passport issuing country; nationality alone is insufficient. A format or check digit result is not evidence that an identifier belongs to this patient. A destination patient identifier must also be scoped to the destination account.
 
-### 2.2 ReferralV1 and attachment
+### 2.3 ReferralV1 and attachment
 
 ```ts
 type ReferralV1 = {
   schema: "access.referral.v1";
+  case_id: string;
   referral_id: string;
   patient: PatientV1;
   source_artifact_ids: string[];
@@ -87,7 +143,10 @@ Every mutating public request requires `Idempotency-Key`, a UUID generated by th
 | `POST /v1/tenants/{tenant_id}/uploads` | JSON declared media type, byte length, file SHA256 and optional source reference | `201` with `upload_id`, scoped private Storage upload capability and acceptance deadline |
 | `POST /v1/tenants/{tenant_id}/uploads/{upload_id}/finalise` | JSON upload identifier and completion assertion, no file body | `202` after durable verification work is queued; does not mark bytes safe |
 | `GET /v1/tenants/{tenant_id}/uploads/{upload_id}` | Authenticated read | `200` with quarantine, verification or rejection status and accepted artifact ID when available |
-| `POST /v1/tenants/{tenant_id}/referrals` | Finalised clean artifact IDs, channel `upload` or `partner_api`, source reference | `201` with referral ID, version and state |
+| `POST /v1/tenants/{tenant_id}/cases/referrals` | Finalised clean artifact IDs, enabled channel and source reference | `201` with case ID, referral ID, versions and states |
+| `GET /v1/tenants/{tenant_id}/cases/{case_id}` | Authenticated read | `200` with case, referral extension, interactions, outcomes and current rule version |
+| `POST /v1/tenants/{tenant_id}/cases/{case_id}/interactions` | Strict enabled interaction schema | `201` with immutable interaction receipt |
+| `POST /v1/tenants/{tenant_id}/cases/{case_id}/outcomes` | Human or import observation with evidence | `202` after durable acceptance; reconciliation decides the case transition |
 | `GET /v1/tenants/{tenant_id}/referrals/{id}` | Authenticated read | `200` with authorised detail and version |
 | `GET /v1/tenants/{tenant_id}/work-items` | Bounded pagination and approved filters | `200` with authorised work items |
 | `POST /v1/tenants/{tenant_id}/referrals/{id}/commands` | Command envelope below | `200` for a committed local transition or `202` when an effect is pending |
@@ -115,9 +174,11 @@ type ReferralCommandV1 = {
 };
 ```
 
+Case outcome submission uses a separate strict `AccessCaseCommandV1` with `expected_case_version`, `outcome.record` and one `CaseOutcomeV1` payload. It cannot reuse a referral `expected_version` or mutate an execution result. Connector-derived outcomes first enter their authenticated observation route and are reconciled into a case outcome.
+
 `identity.resolve` distinguishes `link_existing` from `propose_create`; neither operation merges patient records. `execution.approve` supplies the displayed executable action hash and execution ID. `execution.cancel` can cancel an unstarted execution; after start it only requests investigation and prevents dependent new starts. `manual.complete` requires a prepared work item, exact prepared hash, observed external reference and evidence of human completion.
 
-Success returns `{ command_id, referral_id, version, state, execution_ids, work_item_ids, replayed }`. Error responses return `{ code, message, correlation_id, retryable, current_version? }` without sensitive detail. A stale command returns `409 VERSION_CONFLICT`. Invalid input returns `422`; unauthenticated input `401`; unauthorised actions `403`; unavailable internal authority `503`. Return `404` for an inaccessible tenant resource to avoid exposing its existence. A transport timeout means the client must retry the same command key or retrieve its status, not invent a new operation.
+Success returns `{ command_id, case_id, referral_id, case_version, referral_version, case_state, referral_state, execution_ids, work_item_ids, replayed }`. Error responses return `{ code, message, correlation_id, retryable, current_version? }` without sensitive detail. A stale command returns `409 VERSION_CONFLICT`. Invalid input returns `422`; unauthenticated input `401`; unauthorised actions `403`; unavailable internal authority `503`. Return `404` for an inaccessible tenant resource to avoid exposing its existence. A transport timeout means the client must retry the same command key or retrieve its status, not invent a new operation.
 
 Check the existing idempotent command response before comparing `expected_version`; an exact replay of a successful command must not become stale merely because its first submission advanced the version. For a genuinely new command, compare and increment the version in its state transaction.
 
@@ -133,13 +194,22 @@ Check the existing idempotent command response before comparing `expected_versio
 | `COMMIT_PENDING` | Approved execution queued or started | Definitive result, reconciliation or manual investigation |
 | `RECONCILING` | An attempt may have produced an effect | Proven result or investigation; no dependent write |
 | `MANUAL_PENDING` | Safe prepared action awaits human completion | Human attestation or withdrawal before completion |
-| `COMMITTED` | Every required side effect is definitively recorded | Close when required work items are resolved |
+| `COMMITTED` | Required destination side effects are definitively recorded | Establish booking readiness and continue outcome follow-up |
+| `READY_FOR_BOOKING` | Referral data is committed and accepted for booking work | Observe booking or record a supported exception |
+| `WAITING_FOR_BOOKING` | Booking outreach or destination process is in progress | Observe booking, continue follow-up or record closure |
+| `BOOKED` | Accepted outcome confirms the appointment | Reconcile the case and preserve corrections as append-only observations |
 | `CLOSED` | Completion acknowledged; outcome provenance retained | Read only except append correction or investigation evidence |
 | `CANCELLED` | No started or uncertain effect remains; pending work withdrawn | Read only except audit evidence |
 
-`COMMITTED` describes recorded completion, and must carry `completion_source = automated_confirmed | human_attested | mixed`. A human attestation is not evidence of automated enforcement. Partial completion remains visible; do not silently delete or compensate a created patient after a referral write fails.
+`COMMITTED` describes destination completion only. It is not terminal and does not carry the patient-access success claim. `BOOKED`, `CLOSED` and `CANCELLED` carry `completion_source = automated_confirmed | human_attested | mixed` plus the applicable immutable case outcome. A human attestation is not evidence of automated enforcement. Partial completion remains visible; do not silently delete or compensate a created patient after a referral write fails.
 
-Work items use `OPEN`, `ASSIGNED`, `RESOLVED`, `CANCELLED`. Queue kinds are `source_verification`, `identity_review`, `missing_information`, `safe_manual_commit`, `uncertain_execution`, `execution_failure`, and `evidence_conflict`. `safe_manual_commit` contains an action that has never started, or whose previous attempts are conclusively without effect. An uncertain execution can never be converted into permission to repeat the operation merely by changing its queue.
+Work items use `OPEN`, `ASSIGNED`, `RESOLVED`, `CANCELLED`. Queue kinds are `source_verification`, `identity_review`, `missing_information`, `safe_manual_commit`, `uncertain_execution`, `execution_failure`, `evidence_conflict`, `approval`, `outcome_follow_up` and `status_review`. `safe_manual_commit` contains an action that has never started, or whose previous attempts are conclusively without effect. An uncertain execution can never be converted into permission to repeat the operation merely by changing its queue.
+
+### 4.1 Operational access rules
+
+An `AccessRuleSetV1` is an immutable, tenant-owned version containing strict schemas for required fields, destination routing, booking-readiness checks, follow-up timers and permitted closure reasons. Draft, published and retired versions are distinct records or immutable states. A case records the exact published rule set used for readiness and execution preparation. The evaluator returns the rule ID, outcome, reason codes and missing facts; it never invents a default clinical value.
+
+Operational rules do not grant read or write authority. `policy_versions` govern who may act; `access_rule_sets` govern what the provider's access workflow requires; `mapping_versions` govern how an approved canonical action becomes destination bytes. A change in any layer that changes action meaning invalidates an unstarted plan and requires a new exact-action approval.
 
 ## 5. Identity coordination
 
@@ -157,6 +227,7 @@ Create one execution for each external side effect, including `patient.create`, 
 type ExecutableActionV1 = {
   schema: "access.executable_action.v1";
   tenant_id: string;
+  case_id: string;
   referral_id: string;
   execution_id: string;
   aggregate_sequence: number;
@@ -209,7 +280,9 @@ Preparation may run as a local core mapping module when it needs no connector de
 
 The execute notification contains references, not a large encoded document body. An assigned connector obtains immutable bytes through `GET /internal/v1/executions/{execution_id}/request-body` before requesting start. This authenticated read checks the connector assignment and streams only that execution's stored body with content length and digest. Resolve `body_ref` through this fixed core endpoint; never dereference a caller supplied URL. Large bodies therefore bypass the 1 MiB JSON command limit without passing through Vercel. Do not spend the five second dispatch window downloading the action.
 
-Capabilities are recorded per operation, destination environment and account. Required fields include adapter version, supported operations, request and response schema versions, required canonical fields, destination authentication scheme, native idempotency mode, key scope, retention duration, concurrent request semantics, payload mismatch behaviour, read back consistency, operation status endpoint semantics, proven cancellation semantics, timeout budget, and evidence reference. Unsupported operations return a typed `UNSUPPORTED_OPERATION` and become a safe manual work item before any attempt starts. Runtime uncertainty never silently degrades into a fresh manual create.
+Capabilities are recorded per operation, destination environment and account. The reserved namespace is `patient.read`, `patient.create`, `referral.read`, `referral.create`, `referral.status.read`, `document.attach`, `appointment.availability.read`, `appointment.create`, `appointment.status.read`, `appointment.cancel` and `appointment.reschedule`. V1.1 may enable only qualified patient/referral/document writes and the minimum read-only status operation required by the pilot. A reserved name is not an implemented capability.
+
+Required fields include adapter version, supported operations, request and response schema versions, required canonical fields, destination authentication scheme, native idempotency mode, key scope, retention duration, concurrent request semantics, payload mismatch behaviour, read back consistency, operation status endpoint semantics, proven cancellation semantics, timeout budget, and evidence reference. Unsupported operations return a typed `UNSUPPORTED_OPERATION` and become a visible manual work item before any attempt starts. Runtime uncertainty never silently degrades into a fresh manual create.
 
 V1 defaults are a 5 s connection deadline, 30 s total foreign call deadline, and 60 s outbox notification lease. A verified operation contract may override these in its immutable capability snapshot. A deadline is a local observation limit, not destination cancellation. Reconciliation uses up to six read only attempts at delays of 5 s, 15 s, 60 s, 300 s, 900 s and 3600 s, with bounded jitter; after that keep the outcome uncertain and assign a work item. No count of unsuccessful reads turns uncertainty into absence.
 
@@ -252,7 +325,7 @@ An execution is one immutable logical side effect. An attempt is one authorised 
 
 Before using native deduplication, verify the key remains within its proven retention window for the entire planned retry and that the destination's same key check is atomic with the effect. A reference field that is merely searchable does not qualify. Definitive absence requires evidence covering all previous attempts and excluding a later commit; an arbitrary waiting period cannot establish it. Keep each response, attempt and conflict observation as evidence.
 
-External writes carry a monotonically increasing sequence per referral. Start only the lowest unresolved eligible write sequence. An advisory lock can reduce contention, but the persisted predecessor condition determines eligibility. A predecessor that is uncertain, awaiting approval or under investigation blocks dependent writes. Read only reconciliation, result application, scanning and extraction jobs do not wait behind this write barrier; otherwise an uncertain write would block the job needed to resolve itself. Outbox notification sequence and execution write sequence are separate concepts. A failed or cancelled predecessor can release progression only through an explicit workflow transition that proves the later operation remains valid. Shared patient creation claims coordinate dependent referrals in addition to referral sequencing.
+External writes carry a monotonically increasing sequence for the enabled referral within its access case. Start only the lowest unresolved eligible write sequence. An advisory lock can reduce contention, but the persisted predecessor condition determines eligibility. A predecessor that is uncertain, awaiting approval or under investigation blocks dependent writes. Read only reconciliation, result application, scanning, extraction and booking-status jobs do not wait behind this write barrier; otherwise an uncertain write would block the job needed to resolve itself. Outbox notification sequence and execution write sequence are separate concepts. A failed or cancelled predecessor can release progression only through an explicit workflow transition that proves the later operation remains valid. Shared patient creation claims coordinate dependent cases in addition to case sequencing.
 
 ## 10. Authenticated observations and callback inbox
 
@@ -286,13 +359,13 @@ No referral `expected_version` is accepted or required. The outcome applier lock
 
 Local OCR and scanning run as bounded jobs scheduled through the transactional outbox. Their result commands have durable deduplication and source version checks. The workflow module is the only writer of referral state. API and worker entrypoints may both invoke that same command handler and repository layer through their tenant database roles; a worker must never invent a second state transition implementation. Connectors use the authenticated internal HTTP endpoints. No worker sends a notification, uploads a document or performs another external effect directly from a database transaction.
 
-Timers contain an ID, tenant, aggregate, purpose, workflow generation, due time and bounded callback payload. At delivery, the workflow checks that purpose and generation remain current. A duplicate or obsolete timer has no effect. Database time determines expiry and due status; monotonic process time measures durations. Workers use bounded batches, per tenant and connector caps, finite backlog limits and explicit work item escalation. Backpressure does not drop accepted work.
+Timers contain an ID, tenant, case, purpose, workflow generation, due time and bounded callback payload. At delivery, the workflow checks that purpose and generation remain current. A duplicate or obsolete timer has no effect. Database time determines expiry and due status; monotonic process time measures durations. Workers use bounded batches, per tenant and connector caps, finite backlog limits and explicit work item escalation. Backpressure does not drop accepted work.
 
 State mutation, event append and outbox intent commit together. Event envelopes contain ID, tenant sequence, previous hash, event hash, correlation, causation, actor reference, subject reference, occurred time, recorded time, reason code and a versioned measurement object. Serialise tenant event appends through a locked chain head. Events contain no editable projection fields. Late or corrected measurements are new linked events.
 
 Measurements distinguish unknown from zero. Record human touch count, verified active interaction milliseconds where measured, processing duration, waiting duration, outcome source and cohort definition. Client reported duration is labelled estimated and checked for overlap, clock anomalies and idle time. A manual completion counts as human work even if nobody opened another work item. V1 critical verification means claims of zero human touch automation are inappropriate.
 
-Define observed completion rate, time to recorded completion, exception rate and human touch rate using published numerators, denominators, windows and exclusions. Report unknown outcomes separately. Do not infer ROI without a measured baseline and attributable costs. The hash chain detects some changes relative to a trusted retained head; it is not an independently trustworthy proof against an administrator who can rewrite both history and its head.
+Define referral-to-booking conversion as accepted `appointment_booked` outcomes divided by all eligible referral cases in the published cohort. Report open, deliberately closed, cancelled and unknown cases separately rather than removing them from the denominator without explanation. Also define time to destination commitment, time to booking, exception rate, corrections, contacts, status enquiries and human touch rate using published windows and exclusions. Do not infer ROI without a measured baseline and attributable costs. The hash chain detects some changes relative to a trusted retained head; it is not an independently trustworthy proof against an administrator who can rewrite both history and its head.
 
 ## 12. Manual completion evidence
 

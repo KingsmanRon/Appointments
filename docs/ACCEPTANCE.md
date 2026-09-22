@@ -1,4 +1,4 @@
-# ACCESS v1 acceptance specification
+# ACCESS v1.1 acceptance specification
 
 Status: required evidence for the proposed build. No row below is claimed to have passed merely because this document exists. Mark each result `NOT_RUN`, `PASS`, `FAIL` or `BLOCKED`, with a reason, immutable code revision and evidence location.
 
@@ -26,6 +26,8 @@ Every acceptance run must distinguish local unit checks, actual PostgreSQL integ
 | I10 | Critical source facts and patient selection require human verification before external writes. |
 | I11 | Human attestation, automated confirmation, unknown outcomes and measured effort remain distinguishable. |
 | I12 | Hosted operation, actual destination capability and production authority require separate evidence. |
+| I13 | A destination write is not reported as a booking; every terminal access result has a sourced case outcome. |
+| I14 | Operational access rules, authority policy and destination mapping remain separately versioned and reviewable. |
 
 ## 3. API, extraction and identity acceptance
 
@@ -124,7 +126,22 @@ The mock must support each failure below at specified barriers. A unit test that
 | H04 | I11 | Compare metrics on a known synthetic cohort containing failures and uncertain cases | Numerators, denominators and exclusions reproduce independently; terminal success, human attestation and unknown outcomes remain separate. |
 | H05 | I11 | Inspect logs, events, exception traces and metric labels during synthetic identifier tests | No raw identifiers, clinical text, bearer tokens, action body or low entropy unkeyed identifier hashes leak. |
 
-## 7. Browser workflow and DTM qualification
+## 7. Patient-access value acceptance
+
+| Test ID | Invariant | Scenario | Required result and evidence |
+| :--- | :--- | :--- | :--- |
+| V01 | I13 | Create a referral through the enabled intake channel | One `REFERRAL` case and one referral extension are linked; disabled case types/channels are rejected rather than partially processed. |
+| V02 | I13 | Record inbound and internal follow-up interactions | Immutable case timeline preserves channel, intent, actor class, identity-verification level and restricted content reference. |
+| V03 | I13 | Confirm every required destination write | Referral reaches `COMMITTED`; case remains active and booking conversion remains false until a separate accepted outcome arrives. |
+| V04 | I13 | Record a verified appointment outcome | Append one sourced `APPOINTMENT_BOOKED` observation, transition consistently to `BOOKED`/resolved and include the case once in the booking numerator. |
+| V05 | I13 | Record unreachable, declined, invalid, referred-elsewhere and unknown outcomes | Enumerated closures retain evidence; unknown remains unresolved; none is counted as booked. |
+| V06 | I11 | Reproduce a cohort with booked, closed, open, cancelled and unknown cases | Denominator, every disposition, time to commitment, time to booking, staff contacts, corrections and effort categories reconcile independently. |
+| V07 | I14 | Publish a changed operational rule while a case or approved action is waiting | Existing case retains its evaluated version; meaning-changing change invalidates an unstarted plan and requires review, without granting or revoking actor authority. |
+| V08 | I14 | Reserve an unsupported appointment or channel capability | Capability remains disabled and returns typed refusal/manual status; namespace reservation cannot be mistaken for implementation. |
+| V09 | I13 | Complete work in the PMS without an ACCESS work item | Human effort/outcome can still be recorded with source; report does not equate “no work item” with “no human effort”. |
+| V10 | I11 | Calculate ROI with missing baseline cost or outcome attribution | Report marks ROI unavailable or scenario-based; it does not fabricate savings or revenue. |
+
+## 8. Browser workflow and DTM qualification
 
 | Test ID | Invariant | Scenario | Required result and evidence |
 | :--- | :--- | :--- | :--- |
@@ -132,7 +149,7 @@ The mock must support each failure below at specified barriers. A unit test that
 | U02 | I03 | Staff approves a prepared external action | UI shows patient, destination, operation, material values, consequence and exact version; approval binds its action hash. |
 | U03 | I11 | Staff uses manual preparation and later attests completion | UI labels human completion and evidence source; it does not label it automated policy enforcement. |
 | U04 | I06 | Staff opens an unresolved timeout | UI shows uncertainty and investigation steps; it offers no unsafe repeat action. |
-| U05 | I12 | Complete the entire synthetic workflow with mock capabilities | Referral, patient operation where supported, document operation where supported, work items, grants, attempts, callbacks and final provenance are linked in one evidence bundle. |
+| U05 | I12 | Complete the entire synthetic workflow with mock capabilities | Case, referral, patient operation where supported, document operation where supported, booking/closure outcome, work items, grants, attempts, callbacks and final provenance are linked in one evidence bundle. |
 | D01 | I12 | Inspect available DTM integration information | Record official or customer authorised documentation, version, authenticated test endpoint, account identity, request and response schemas, supported operations and written test scope; do not infer these from a UI name. |
 | D02 | I03 | Map canonical synthetic examples to each enabled DTM operation | Required fields and final bytes match the verified contract; missing or unsupported fields produce a typed failure before start. |
 | D03 | I07 | Test DTM idempotency, uniqueness, concurrency, retention and mismatch handling | Record actual evidence per capability; disable any unproven safety capability rather than borrow mock guarantees. |
@@ -141,26 +158,27 @@ The mock must support each failure below at specified barriers. A unit test that
 
 If an authenticated DTM contract or authorised test environment is unavailable, D01 to D05 are `BLOCKED`. Complete the mock and safe manual path, label the DTM adapter unqualified, and report that the complete real integration remains outstanding. Do not invent a generic HTTP endpoint and call it a working DTM integration.
 
-## 8. Release gates
+## 9. Release gates
 
 | Gate | Required evidence | Meaning |
 | :--- | :--- | :--- |
-| G1 Specification aligned | Contracts, schema, architecture and build prompt use the same states, table ownership and trust boundary | Implementation may proceed |
-| G2 Local foundation | A01 to A16, P01 to P17, E01 to E21, C01 to C07, T01 to T05, H01 to H05 and U01 to U05 pass on the recorded revision | Local mock and manual workflow accepted |
+| G0 Product hold point | Named design partner or approved synthetic proxy, service line, intake channel, buyer, destination route, baseline fields and pilot outcome contract are recorded | Application implementation may proceed without implying a live pilot is approved |
+| G1 Specification aligned | Contracts, schema, architecture and build prompt use the same states, table ownership and trust boundary | Technical implementation may proceed |
+| G2 Local foundation | A01 to A16, P01 to P17, E01 to E21, C01 to C07, T01 to T05, H01 to H05, V01 to V10 and U01 to U05 pass on the recorded revision | Local mock and manual workflow accepted |
 | G3 Hosted synthetic | G2 plus T06 to T07, managed secret configuration, upload limits, worker restart recovery, regional placement, backup restore evidence and hosted browser checks | Hosted synthetic environment accepted |
 | G4 Real connector qualification | D01 to D05 pass for the enabled operation set and destination test account | Named DTM capabilities accepted in that test environment |
 | G5 Production approval | Explicit user approval to activate a named production tenant, data and region approval, actual credentials, destination scope, operational owners, monitoring, tested restore, runbooks and rollback or suspension procedure | Only the approved production scope may start |
 
 Every report must state which gates passed and which remain outstanding. Mock success cannot substitute for G4. A hosted health endpoint cannot substitute for G3. An available Supabase database, Vercel preview or Railway service cannot substitute for G5. Manual human completion is a supported assurance category and must never be presented as an automated execution guarantee.
 
-## 9. Minimum deliverables from the builder
+## 10. Minimum deliverables from the builder
 
 1. Source tree with bounded modules, shared runtime schemas, locked dependency versions and documented local setup.
 2. Database migrations generated through the agreed workflow, constraints, tenant roles, RLS policies, audited grants and an isolated test database harness.
 3. Mock connector with programmable failure barriers and an independent destination operation log.
 4. Manual connector with separate safe preparation and uncertain execution investigation flows.
 5. DTM adapter and capability evidence, or explicit blocked status with a scaffold that cannot accidentally make real writes.
-6. Console workflow for upload, provenance review, identity decision, completeness, exact action approval, status and exception handling.
+6. Console workflow for upload, provenance review, identity decision, completeness, exact action approval, access-case outcome follow-up, status and exception handling.
 7. Executable acceptance suites, evidence manifest, operational runbooks and a truthful readiness report.
 
 No deployment, remote database change, production credential creation or external patient action is implied by writing this specification. The builder must follow the user's actual authorised scope when carrying out those steps.
