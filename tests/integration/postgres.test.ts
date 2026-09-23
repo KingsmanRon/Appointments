@@ -43,11 +43,15 @@ describe.runIf(enabled)("real PostgreSQL invariants", () => {
         [a],
       );
       await c.query("ROLLBACK");
-      for (const table of ["referrals", "evidence_events", "outbox"])
+      for (const [table, column] of [
+        ["referrals", "id"],
+        ["evidence_events", "referral_id"],
+        ["outbox", "referral_id"],
+      ])
         expect(
           (
             await c.query(
-              `SELECT count(*)::int n FROM ${table} WHERE referral_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'`,
+              `SELECT count(*)::int n FROM ${table} WHERE ${column}='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'`,
             )
           ).rows[0].n,
         ).toBe(0);
