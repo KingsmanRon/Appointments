@@ -91,10 +91,11 @@ app.get("/v1/referrals/:id", async (req) => {
   });
 });
 app.setErrorHandler((e, _q, r) => {
-  log("error", "request_failed", { error: e.message });
+  const error = e instanceof Error ? e : new Error(String(e));
+  log("error", "request_failed", { error: error.message });
   r.code((e as { statusCode?: number }).statusCode ?? 400).send({
-    error: e.name,
-    message: e.message,
+    error: error.name,
+    message: error.message,
   });
 });
 if (process.env.NODE_ENV !== "test")

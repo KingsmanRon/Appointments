@@ -9,11 +9,7 @@ export type ReferralState =
   | "EXCEPTION"
   | "REJECTED";
 export type Outcome =
-  | "SUCCEEDED"
-  | "RETRYABLE"
-  | "PERMANENT"
-  | "DEFERRED"
-  | "AMBIGUOUS";
+  "SUCCEEDED" | "RETRYABLE" | "PERMANENT" | "DEFERRED" | "AMBIGUOUS";
 const allowed: Record<ReferralState, readonly ReferralState[]> = {
   // Keep legal transitions centralized so command handlers cannot invent paths.
   RECEIVED: [

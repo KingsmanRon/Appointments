@@ -24,13 +24,13 @@ export type Command = z.infer<typeof commandSchema>;
 export const extractedReferralSchema = z
   .object({
     schema_version: z.literal("referral-extraction.v1"),
-    patient: {
+    patient: z.object({
       given_name: z.string().min(1),
       family_name: z.string().min(1),
       date_of_birth: z.iso.date(),
       external_id: z.string().min(1).optional(),
-    },
-    referrer: { name: z.string().min(1) },
+    }),
+    referrer: z.object({ name: z.string().min(1) }),
     reason: z.string().min(1),
     documents: z.array(
       z.enum(["referral_letter", "insurance", "demographics"]),
