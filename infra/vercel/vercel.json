@@ -1,0 +1,5 @@
+{
+  "framework": "vite",
+  "buildCommand": "cd ../.. && npm -w @access/console run build",
+  "outputDirectory": "../../apps/console/dist"
+}
