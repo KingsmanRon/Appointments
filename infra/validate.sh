@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 node -e "JSON.parse(require('fs').readFileSync('infra/vercel/vercel.json'))"
-test -s infra/azure/main.bicep && test -s infra/railway/railway.toml && test -s Dockerfile && test -s docker-compose.yml
+test -s infra/azure/main.bicep && test -s infra/railway/api.railway.toml && test -s infra/railway/worker.railway.toml && test -s Dockerfile && test -s docker-compose.yml
 if command -v az >/dev/null; then
   az bicep build --file infra/azure/main.bicep --stdout >/dev/null
 elif command -v bicep >/dev/null; then

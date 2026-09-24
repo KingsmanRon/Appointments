@@ -26,7 +26,7 @@ Install Node 20+, npm 11+, and Docker Compose. No cloud credentials are needed.
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
 docker compose up --build
 ```
 
@@ -93,9 +93,13 @@ staging evidence before release.
 
 ## Deployment
 
-Build and push one immutable image, provision a Supabase PostgreSQL project in
-the approved region, then apply `supabase/migrations/0001_access.sql` with its
-migration owner. Never give `access_request` owner/BYPASSRLS privileges.
+Build and push one immutable image and provision Supabase with three credentials.
+`MIGRATION_DATABASE_URL` is used only by `npm run db:migrate`; the API receives
+only `API_DATABASE_URL` (`access_request`) and the worker only
+`WORKER_DATABASE_URL` (`access_worker`). Run every ordered migration, then run
+`supabase/provisioning/runtime-roles.sql` as the owner with passwords supplied as
+psql variables. Runtime startup in staging/production rejects the wrong role,
+superuser/BYPASSRLS, or table ownership. Never reuse the migration URL at runtime.
 
 ```bash
 docker build -t "$REGISTRY/access:$GIT_SHA" .
@@ -103,12 +107,18 @@ docker push "$REGISTRY/access:$GIT_SHA"
 RESOURCE_GROUP=access-prod PREFIX=access-prod IMAGE="$REGISTRY/access:$GIT_SHA" \
   DATABASE_URL="$SUPABASE_DATABASE_URL" infra/azure/deploy.sh
 vercel deploy --prod --cwd apps/console
-# optional short-lived integration deployment
-railway up
+# Railway: create two services from the same image. Select
+# infra/railway/api.railway.toml and infra/railway/worker.railway.toml respectively.
 ```
 
-Configure the API and worker as separate Azure Container App revisions from the
-same image; worker command is `node apps/worker/dist/main.js`. Store database and
+The Railway API has a public domain, `/ready`, `API_DATABASE_URL`,
+`ARTIFACT_ROOT`, `ARTIFACT_ENCRYPTION_KEY`, `CONSOLE_ORIGIN`, and
+`ALLOW_SYNTHETIC_TENANT_CONTEXT=true`. The worker has no domain or HTTP health
+check, starts `node apps/worker/dist/main.js`, has one replica, and receives only
+`WORKER_DATABASE_URL`, `DISPATCH_MAX_ATTEMPTS`, `RECONCILE_MAX_ATTEMPTS`, and
+`RECONCILE_BASE_SECONDS`. Vercel receives only `VITE_CORE_API_URL`; it receives
+no database or service-role secret. Configure the API and worker as separate Azure Container App revisions from the
+same image. Store database and
 artifact keys in Azure Key Vault/Container Apps secrets, require database TLS,
 restrict connector egress, and set the console's `VITE_CORE_API_URL` at build
 time. Vercel receives only the public core API URL and workforce-auth settings,
@@ -120,8 +130,10 @@ image/dependencies, exercise every alert/runbook, and perform the documented
 PITR restore. Capture deployment output, test logs, image digest, RLS role
 inspection, restore RPO/RTO, load JSON and evidence-chain comparison in the
 release record. Cloud deployment, real malware scanning, workforce JWT
-verification, short-lived execution grants and restore evidence remain explicit
-pre-live gates.
+verification, managed object storage, production key rotation, production
+telemetry/alerting, real connector qualification, DAST/penetration testing,
+formal privacy/security approval, short-lived execution grants and restore
+evidence remain explicit pre-live gates. **This remains synthetic staging only.**
 
 See [the architecture ADR](docs/adr/0001-production-slice.md), [security
 assumptions](docs/security.md), and [operator runbooks](docs/runbooks.md).

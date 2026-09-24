@@ -14,6 +14,18 @@ Keep the referral in `RECONCILING`. Invoke read-back with the original
 reconciliation with no unique match, open an exception. Never allocate another
 execution ID for the same intended effect.
 
+The worker uses capped exponential scheduling (`RECONCILE_BASE_SECONDS`, maximum
+300 seconds) and `RECONCILE_MAX_ATTEMPTS`. An inconclusive poll updates technical
+attempt metadata only: it does not change aggregate version or append duplicate
+domain evidence. Exhaustion atomically moves the referral to `EXCEPTION`, opens
+one connector work item and appends escalation evidence.
+
+## Artifact transaction failure
+
+Local staging storage uses a deterministic object key and exclusive encrypted
+write. If ingest later rolls back, a newly created encrypted object is deleted;
+an already existing idempotent object is retained. No plaintext is written.
+
 ## Database interruption and restore
 
 Stop dispatchers, capture queue watermark, restore the provider PITR backup into

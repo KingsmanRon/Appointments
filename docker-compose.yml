@@ -19,22 +19,36 @@ services:
     command: ["node", "packages/db/dist/migrate.js"]
     environment:
       {
-        DATABASE_URL: "postgres://access_owner:access_owner@postgres:5432/access",
+        MIGRATION_DATABASE_URL: "postgres://access_owner:access_owner@postgres:5432/access",
       }
     depends_on: { postgres: { condition: service_healthy } }
+  provision:
+    image: postgres:16.4
+    command:
+      [
+        "bash",
+        "-c",
+        'psql "$$MIGRATION_DATABASE_URL" -c "ALTER ROLE access_request LOGIN PASSWORD ''local-api''; ALTER ROLE access_worker LOGIN PASSWORD ''local-worker''"',
+      ]
+    environment:
+      {
+        MIGRATION_DATABASE_URL: "postgres://access_owner:access_owner@postgres:5432/access",
+      }
+    depends_on: { migrate: { condition: service_completed_successfully } }
   api:
     build: .
     ports: ["3001:3001"]
     environment:
-      DATABASE_URL: postgres://access_owner:access_owner@postgres:5432/access
+      API_DATABASE_URL: postgres://access_request:local-api@postgres:5432/access
       ARTIFACT_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
-    depends_on: { migrate: { condition: service_completed_successfully } }
+      ALLOW_SYNTHETIC_TENANT_CONTEXT: "true"
+    depends_on: { provision: { condition: service_completed_successfully } }
   worker:
     build: .
     command: ["node", "apps/worker/dist/main.js"]
     environment:
       {
-        DATABASE_URL: "postgres://access_owner:access_owner@postgres:5432/access",
+        WORKER_DATABASE_URL: "postgres://access_worker:local-worker@postgres:5432/access",
       }
-    depends_on: { migrate: { condition: service_completed_successfully } }
+    depends_on: { provision: { condition: service_completed_successfully } }
 volumes: { pgdata: {} }

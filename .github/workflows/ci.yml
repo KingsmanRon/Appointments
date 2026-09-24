@@ -20,11 +20,9 @@ jobs:
       }
     steps:
       - uses: actions/checkout@v4
-      # npm caching requires a committed lockfile. This repository deliberately
-      # uses `npm install` until registry access can generate that lockfile.
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm install
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
       - run: npm run format
       - run: npm run lint
       - run: npm run typecheck

@@ -1,5 +1,5 @@
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 export interface ArtifactStore {
   put(input: { tenantId: string; referralId: string; bytes: Buffer }): Promise<{
@@ -7,7 +7,9 @@ export interface ArtifactStore {
     digest: string;
     size: number;
     keyId: string;
+    created: boolean;
   }>;
+  remove(objectKey: string): Promise<void>;
 }
 export class EncryptedFileStore implements ArtifactStore {
   constructor(
@@ -28,11 +30,30 @@ export class EncryptedFileStore implements ArtifactStore {
     const dir = join(this.root, i.tenantId);
     await mkdir(dir, { recursive: true, mode: 0o700 });
     const objectKey = `${i.tenantId}/${i.referralId}-${digest}.enc`;
-    await writeFile(
-      join(this.root, objectKey),
-      Buffer.concat([iv, encrypted]),
-      { mode: 0o600 },
-    );
-    return { objectKey, digest, size: i.bytes.length, keyId: "local-aes-v1" };
+    let created = true;
+    try {
+      await writeFile(
+        join(this.root, objectKey),
+        Buffer.concat([iv, encrypted]),
+        { mode: 0o600, flag: "wx" },
+      );
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") created = false;
+      else throw e;
+    }
+    return {
+      objectKey,
+      digest,
+      size: i.bytes.length,
+      keyId: "local-aes-v1",
+      created,
+    };
+  }
+  async remove(objectKey: string) {
+    try {
+      await unlink(join(this.root, objectKey));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
   }
 }
