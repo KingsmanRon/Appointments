@@ -13,6 +13,14 @@ describe("referral domain", () => {
     expect(() => transition("COMPLETED", "READY")).toThrow();
   });
   it.each([
+    ["COMPLETED", "DISPATCH_PENDING"],
+    ["REJECTED", "READY"],
+    ["RECONCILING", "DISPATCH_PENDING"],
+    ["RECEIVED", "COMPLETED"],
+  ] as const)("rejects %s -> %s", (from, to) =>
+    expect(() => transition(from, to)).toThrow("invalid transition"),
+  );
+  it.each([
     ["SUCCEEDED", "COMPLETED"],
     ["RETRYABLE", "DISPATCH_PENDING"],
     ["PERMANENT", "EXCEPTION"],

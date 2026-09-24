@@ -1,12 +1,12 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { ingestRequestSchema, resolutionSchema } from "@access/contracts";
-import { pool, tenantTx } from "@access/db";
+import { pool, tenantTx, verifyRuntimeIdentity } from "@access/db";
 import { log, Metrics } from "@access/observability";
 import { EncryptedFileStore } from "./artifact.js";
 import { FixtureExtractor } from "./extraction.js";
 import { ReferralService } from "./service.js";
-const required = ["DATABASE_URL", "ARTIFACT_ENCRYPTION_KEY"] as const;
+const required = ["ARTIFACT_ENCRYPTION_KEY"] as const;
 for (const key of required)
   if (!process.env[key]) throw new Error(`${key} required`);
 const metrics = new Metrics();
@@ -18,6 +18,24 @@ const service = new ReferralService(
   ),
   new FixtureExtractor(),
 );
+if (["staging", "production"].includes(process.env.NODE_ENV ?? ""))
+  await verifyRuntimeIdentity(pool, "access_request");
+function tenantContext(header: unknown, claimed?: string) {
+  if (
+    process.env.ALLOW_SYNTHETIC_TENANT_CONTEXT !== "true" &&
+    process.env.NODE_ENV !== "development" &&
+    process.env.NODE_ENV !== "test"
+  )
+    throw Object.assign(new Error("verified workforce identity required"), {
+      statusCode: 401,
+    });
+  const tenant = String(header ?? claimed ?? "");
+  if (!tenant || (claimed && tenant !== claimed))
+    throw Object.assign(new Error("tenant context required"), {
+      statusCode: 400,
+    });
+  return tenant;
+}
 export const app = Fastify({ logger: false, bodyLimit: 14_000_000 });
 await app.register(cors, {
   origin: (process.env.CONSOLE_ORIGIN ?? "http://localhost:3000").split(","),
@@ -52,16 +70,17 @@ app.get("/ready", async (_q, r) => {
 app.get("/metrics", async () => metrics.snapshot());
 app.post("/v1/referrals", async (req, reply) => {
   const input = ingestRequestSchema.parse(req.body);
+  tenantContext(req.headers["x-tenant-id"], input.tenant_id);
   metrics.inc("referrals_ingested_total");
   return reply.code(201).send(await service.ingest(input));
 });
 app.post("/v1/referrals/:id/resolve", async (req) => {
-  const tenant = String(req.headers["x-tenant-id"] ?? "");
+  const tenant = tenantContext(req.headers["x-tenant-id"]);
   const params = req.params as { id: string };
   return service.resolve(tenant, params.id, resolutionSchema.parse(req.body));
 });
 app.get("/v1/referrals/:id", async (req) => {
-  const tenant = String(req.headers["x-tenant-id"] ?? "");
+  const tenant = tenantContext(req.headers["x-tenant-id"]);
   const { id } = req.params as { id: string };
   return tenantTx(tenant, async (c) => {
     const referral = await c.query(

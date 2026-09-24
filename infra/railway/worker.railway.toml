@@ -2,5 +2,6 @@
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 [deploy]
-healthcheckPath = "/ready"
+startCommand = "node apps/worker/dist/main.js"
 restartPolicyType = "ON_FAILURE"
+numReplicas = 1

@@ -10,6 +10,22 @@ import { evaluateAction } from "@access/policy";
 import { processCommand, tenantTx } from "@access/db";
 import type { ArtifactStore } from "./artifact.js";
 import type { ExtractionPort } from "./extraction.js";
+export function decodeArtifact(content: string): Buffer {
+  if (
+    content.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(content) ||
+    (content.includes("=") && content.indexOf("=") < content.length - 2)
+  )
+    throw Object.assign(new Error("malformed base64"), { statusCode: 400 });
+  const bytes = Buffer.from(content, "base64");
+  if (bytes.toString("base64") !== content)
+    throw Object.assign(new Error("malformed base64"), { statusCode: 400 });
+  if (bytes.length === 0 || bytes.length > 10_000_000)
+    throw Object.assign(new Error("artifact size invalid"), {
+      statusCode: 400,
+    });
+  return bytes;
+}
 export class ReferralService {
   constructor(
     private db: Pool,
@@ -27,11 +43,7 @@ export class ReferralService {
     content_base64: string;
     fixture: string;
   }) {
-    const bytes = Buffer.from(input.content_base64, "base64");
-    if (bytes.length === 0 || bytes.length > 10_000_000)
-      throw Object.assign(new Error("artifact size invalid"), {
-        statusCode: 400,
-      });
+    const bytes = decodeArtifact(input.content_base64);
     const stored = await this.artifacts.put({
       tenantId: input.tenant_id,
       referralId: input.referral_id,
@@ -72,6 +84,9 @@ export class ReferralService {
           [input.tenant_id, input.referral_id, { filename: input.filename }],
         );
         return { state: "EXCEPTION", ...result };
+      }).catch(async (error) => {
+        if (stored.created) await this.artifacts.remove(stored.objectKey);
+        throw error;
       });
     }
     const identity = identityDecision(
@@ -159,6 +174,9 @@ export class ReferralService {
         execution_id: state === "DISPATCH_PENDING" ? executionId : null,
         ...result,
       };
+    }).catch(async (error) => {
+      if (stored.created) await this.artifacts.remove(stored.objectKey);
+      throw error;
     });
   }
   async resolve(
