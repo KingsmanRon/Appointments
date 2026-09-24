@@ -143,7 +143,6 @@ describe.runIf(enabled)("real PostgreSQL invariants", () => {
       c.release();
     }
   });
-  afterAll(() => pool.end());
   it("migration is repeatable and recorded", async () => {
     await pool.query(
       await readFile("supabase/migrations/0001_access.sql", "utf8"),
@@ -168,7 +167,7 @@ describe.runIf(enabled)("real PostgreSQL invariants", () => {
         [a],
       );
       await c.query(
-        "INSERT INTO evidence_events(tenant_id,referral_id,sequence,event_type,payload,previous_hash,hash,correlation_id) VALUES($1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',1,'test','{}','GENESIS','hash','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')",
+        "INSERT INTO evidence_events(tenant_id,referral_id,sequence,aggregate_version,event_type,payload,previous_hash,hash,correlation_id) VALUES($1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',1,1,'test','{}','GENESIS','hash','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')",
         [a],
       );
       await c.query(
@@ -189,6 +188,9 @@ describe.runIf(enabled)("real PostgreSQL invariants", () => {
           ).rows[0].n,
         ).toBe(0);
     } finally {
+      // Never return an aborted transaction to the shared pool: a failed
+      // assertion or schema regression must not cascade into later tests.
+      await c.query("ROLLBACK").catch(() => undefined);
       c.release();
     }
   });
@@ -233,8 +235,15 @@ describe.runIf(enabled)("real PostgreSQL invariants", () => {
         ).rows[0].n,
       ).toBe(1);
     } finally {
-      await c.query("RESET ROLE");
-      c.release();
+      try {
+        await c.query("ROLLBACK");
+        await c.query("RESET ROLE");
+      } finally {
+        c.release();
+      }
     }
+  });
+  afterAll(async () => {
+    await pool.end();
   });
 });
