@@ -450,6 +450,11 @@ export interface ObservationInput {
   payload?: object;
   resolutionCode?: ResolutionCode;
   authority?: "EXTERNAL" | "STAFF";
+  /**
+   * Appointment operations cases only: the settlement already decided what
+   * the fact does (their lifecycle is not the referral planner's).
+   */
+  plan?: ObservationPlan;
 }
 export interface ObservationResult {
   observationId: string;
@@ -495,14 +500,25 @@ export async function recordObservation(
       plan: { disposition: "RECORDED", reason: "duplicate" },
       caseRow: caseRowIn,
     };
-  const plan = planObservation({
-    state: caseRowIn.current_state,
-    type: input.type,
-    occurredAt: input.occurredAt,
-    ...(input.resolutionCode ? { resolutionCode: input.resolutionCode } : {}),
-    caseOutcome: { code: caseRowIn.resolution_code, at: caseRowIn.outcome_at },
-    authority: input.authority ?? "EXTERNAL",
-  });
+  if (input.plan && caseRowIn.case_type === "REFERRAL")
+    throw new AppError(
+      500,
+      "OBSERVATION_PLAN_FORBIDDEN",
+      "referral outcomes are always planned",
+    );
+  const plan =
+    input.plan ??
+    planObservation({
+      state: caseRowIn.current_state,
+      type: input.type,
+      occurredAt: input.occurredAt,
+      ...(input.resolutionCode ? { resolutionCode: input.resolutionCode } : {}),
+      caseOutcome: {
+        code: caseRowIn.resolution_code,
+        at: caseRowIn.outcome_at,
+      },
+      authority: input.authority ?? "EXTERNAL",
+    });
   const inserted = await c.query<{ id: string }>(
     `INSERT INTO access_case_observations(tenant_id,case_id,observation_type,occurred_at,source_type,source_reference,verification_level,actor_id,payload,correlation_id,disposition,disposition_reason,applied_at)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $11='APPLIED' THEN now() END) RETURNING id`,
@@ -726,8 +742,12 @@ export async function caseExecutions(
   );
   return rows.rows;
 }
-/** The worker may still act on the foreign system for this execution. */
+/**
+ * The worker may still act on the foreign system for this execution. A
+ * superseded execution (settled by an audited staff decision) never runs.
+ */
 export function executionInFlight(e: ExecutionSummary): boolean {
+  if (e.superseded_at) return false;
   return (
     ["PENDING", "LEASED", "RETRYABLE", "RECONCILING"].includes(e.status) ||
     (e.status === "AMBIGUOUS" && !e.escalated_at)
@@ -738,7 +758,10 @@ export function executionUnresolved(e: ExecutionSummary): boolean {
   return executionInFlight(e) || (e.status === "AMBIGUOUS" && !e.superseded_at);
 }
 
-/** Enqueue a consequential destination action in the caller's transaction. */
+/**
+ * Enqueue a destination action in the caller's transaction. A BLOCKED step is
+ * pre-authorised but never claimed until the worker releases it.
+ */
 export async function enqueueDestination(
   c: DbClient,
   ctx: Ctx,
@@ -747,9 +770,11 @@ export async function enqueueDestination(
     operation: Operation;
     subject: Subject;
     payload: Record<string, unknown>;
+    status?: "PENDING" | "BLOCKED";
   },
 ): Promise<string> {
   const executionId = randomUUID();
+  const status = input.status ?? "PENDING";
   await c.query(
     `INSERT INTO executions(id,tenant_id,case_id,referral_id,subject_type,subject_id,operation,status,attempts,correlation_id)
      VALUES($1,$2,$3,$4,$5,$6,$7,'PENDING',0,$8)`,
@@ -765,8 +790,8 @@ export async function enqueueDestination(
     ],
   );
   await c.query(
-    `INSERT INTO outbox(tenant_id,case_id,referral_id,subject_type,subject_id,operation,aggregate_version,execution_id,payload,correlation_id)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    `INSERT INTO outbox(tenant_id,case_id,referral_id,subject_type,subject_id,operation,aggregate_version,execution_id,payload,correlation_id,status)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [
       ctx.tenantId,
       caseRow.id,
@@ -787,10 +812,14 @@ export async function enqueueDestination(
         payload: input.payload,
       },
       ctx.correlationId,
+      status,
     ],
   );
   await evidence(c, ctx, caseRow, input.subject, {
-    eventType: "destination_dispatch_requested",
+    eventType:
+      status === "BLOCKED"
+        ? "destination_step_planned"
+        : "destination_dispatch_requested",
     payload: { execution_id: executionId, operation: input.operation },
   });
   return executionId;
