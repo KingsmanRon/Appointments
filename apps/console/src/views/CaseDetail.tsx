@@ -345,7 +345,8 @@ function Actions({ view, onDone }: { view: View; onDone: () => void }) {
       (w: any) =>
         w.kind !== "IDENTITY" &&
         w.kind !== "COMPLETENESS" &&
-        w.kind !== "MANUAL_DESTINATION",
+        // In EXCEPTION a destination item can be retried once the connector is back.
+        !(w.kind === "MANUAL_DESTINATION" && state !== "EXCEPTION"),
     )
   )
     available.push(["resolve_exception", "Resolve work item"]);
