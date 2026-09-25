@@ -213,6 +213,20 @@ describe("worker startup configuration", () => {
       ).join(),
     ).toMatch(/fault injection/);
   });
+  it("an empty capability list means every implemented capability", () =>
+    expect(
+      loadWorkerConfig({
+        NODE_ENV: "development",
+        WORKER_DATABASE_URL: "postgres://access_worker:x@localhost/access",
+        CONNECTOR_KIND: "mock",
+        CONNECTOR_CAPABILITIES: "",
+      }).connector.capabilities,
+    ).toEqual([
+      "patient.lookup",
+      "referral.create",
+      "referral.status.read",
+      "appointment.status.read",
+    ]));
   it("never accepts the migration credential", () =>
     expect(
       problems(() =>

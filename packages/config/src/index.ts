@@ -376,7 +376,7 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
       "REAL data mode refuses the mock connector; use CONNECTOR_KIND=none with the manual destination workflow",
     );
   const requested = (
-    env.CONNECTOR_CAPABILITIES ?? CONNECTOR_IMPLEMENTED[kind].join(",")
+    env.CONNECTOR_CAPABILITIES || CONNECTOR_IMPLEMENTED[kind].join(",")
   )
     .split(",")
     .map((s) => s.trim())

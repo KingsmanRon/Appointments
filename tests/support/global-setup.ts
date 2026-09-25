@@ -17,6 +17,12 @@ export default async function setup() {
     );
     return;
   }
+  // This setup drops the public schema: refuse anything but a test database.
+  const database = decodeURIComponent(new URL(url).pathname.slice(1));
+  if (!/test/i.test(database) && process.env.ACCESS_ALLOW_TEST_RESET !== "true")
+    throw new Error(
+      `refusing to reset database "${database}": TEST_DATABASE_URL must name a test database`,
+    );
   const pool = new pg.Pool({ connectionString: url });
   try {
     await pool.query(

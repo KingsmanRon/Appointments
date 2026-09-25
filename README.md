@@ -1,139 +1,120 @@
-# ACCESS referral vertical slice
+# ACCESS — Referral Operations (v1.1)
 
-Runnable first vertical slice of the ACCESS healthcare patient-access platform.
-It accepts **synthetic data only**, encrypts artifacts, performs fixed-schema
-extraction, resolves administrative exceptions, applies action policy, commits
-state/evidence/outbox atomically, and dispatches an idempotent mock connector.
+ACCESS is a standalone patient-access orchestration layer. It converts inbound
+referrals into verified, complete, tracked and measurable outcomes inside the
+provider's existing systems:
+
+```text
+referral received → patient resolved → information completed → administrative
+readiness determined → destination updated → ready for booking → appointment
+booked or referral deliberately closed → business outcome measured
+```
+
+ACCESS makes **deterministic administrative decisions only** (identity
+sufficiency, required information and documents, configured routing, connector
+availability, when staff must intervene). It never decides diagnosis, clinical
+urgency, prioritisation, treatment suitability or clinical acceptance. Anything
+that looks urgent or clinical is routed to a human safety workflow.
+
+## Status
+
+| Capability                                                                     | Implemented       | Client-pilot ready                       | Production ready                     |
+| ------------------------------------------------------------------------------ | ----------------- | ---------------------------------------- | ------------------------------------ |
+| `access_case` aggregate (REFERRAL; five other case types defined, fail closed) | yes               | yes                                      | yes                                  |
+| Case lifecycle through booking or deliberate closure, resolution codes         | yes               | yes                                      | yes                                  |
+| Append-only interactions, outcome observations, effort events                  | yes               | yes                                      | yes                                  |
+| Versioned, immutable administrative rule sets + deterministic evaluator        | yes               | yes                                      | yes                                  |
+| Business measurement with provenance (case and cohort)                         | yes               | yes                                      | yes                                  |
+| Workforce auth: Supabase JWT + membership-derived tenant and role              | yes               | yes (after IdP setup)                    | needs pen test                       |
+| PostgreSQL RLS, least-privilege runtime roles, ledger migrations               | yes               | yes                                      | yes                                  |
+| Managed private artifact storage (Supabase Storage + app-layer AES-GCM)        | yes               | yes (after bucket provisioning)          | needs key rotation                   |
+| Malware scanning (ClamAV INSTREAM sidecar), fail closed                        | yes               | yes (after clamd deployment)             | needs signature monitoring           |
+| Manual destination workflow (staff enters referral in the PMS)                 | yes               | **yes — the pilot destination path**     | yes                                  |
+| Automated destination connector                                                | mock only         | **no** (no real PMS connector qualified) | no                                   |
+| Closed-loop outcome readback                                                   | port + mock       | staff/import only                        | needs a qualified connector          |
+| Staff console: queue, case detail, actions, dashboard, rules                   | yes               | yes                                      | needs usability/accessibility review |
+| Email / WhatsApp / voice / patient portal channels                             | defined, disabled | no                                       | future                               |
+| Appointment scheduling, rescheduling, cancellation cases                       | defined, disabled | no                                       | future                               |
+
+"Client-pilot ready" still requires every gate in
+[docs/client-pilot-checklist.md](docs/client-pilot-checklist.md) before any
+identifiable patient data is used. **Until then: synthetic data only.**
 
 ## Architecture
 
-- `apps/core-api`: validated command/query HTTP API; no foreign I/O in DB transactions.
-- `apps/worker`: leased, ordered outbox dispatcher and ambiguous-write reconciler.
-- `apps/console`: minimal Vite/React staff view of state, evidence, work and execution.
-- `packages/domain`, `contracts`, `policy`: pure workflow, versioned schemas and policy.
-- `packages/db`: tenant transaction helper and atomic command repository.
-- `supabase`: repeatable PostgreSQL migration, forced RLS roles/policies and synthetic seed.
-- `infra`: Azure Container Apps reference, Vercel console, Railway option and portable image.
+TypeScript modular monolith over PostgreSQL (Supabase).
 
-The extractor and encrypted artifact store are replaceable ports. The mock
-connector supports success, retryable, permanent, deferred, malformed,
-capability-withdrawn and committed-then-timeout behavior. An ambiguous result is
-reconciled by its original `execution_id`, never blindly retried.
+- `apps/core-api` — Fastify API: intake, interactions, staff actions, outcome
+  import, queue/case/metrics queries, rule-set and membership administration.
+  JWT auth, artifact storage port, scanner port, extraction port.
+- `apps/worker` — leased, case-ordered outbox dispatcher; ambiguous-write
+  reconciler; outcome readback poller; follow-up/escalation timers.
+- `apps/console` — React/Vite staff console (Supabase sign-in).
+- `packages/contracts` — versioned schemas and the platform vocabulary.
+- `packages/domain` — case state machine and outcome-observation planning.
+- `packages/rules` — typed rule-set schema and deterministic evaluator.
+- `packages/policy` — RBAC and case-type/operation authorisation.
+- `packages/db` — case engine, evidence chain, command idempotency, metrics,
+  ledger migration runner, seeding/bootstrap.
+- `packages/config` — fail-closed startup configuration per profile.
+- `supabase/migrations` — `0001`–`0005` (additive; applied by the ledger runner).
 
-## Prerequisites and one-command local start
+Read next: [ADR 0002 — case aggregate](docs/adr/0002-access-case-aggregate.md),
+[ADR 0003 — execution, identity and storage](docs/adr/0003-execution-identity-storage.md),
+[data model](docs/data-model.md), [contracts](docs/contracts.md),
+[security](docs/security.md), [deployment](docs/deployment.md),
+[runbooks](docs/runbooks.md), [rules guide](docs/rules-guide.md),
+[connector qualification](docs/connector-qualification.md),
+[synthetic qualification](docs/qualification.md).
 
-Install Node 20+, npm 11+, and Docker Compose. No cloud credentials are needed.
+## Local development (synthetic data)
+
+Node 20+, npm, PostgreSQL 16 (or Docker Compose).
 
 ```bash
 cp .env.example .env
 npm ci
-docker compose up --build
+docker compose up --build        # postgres, migrate, seed, api :3001, worker
+VITE_AUTH_MODE=synthetic npm -w @access/console run dev   # console :3000
 ```
 
-The API is at `http://localhost:3001`, health at `/health` and readiness at
-`/ready`. Run the console separately with `npm -w @access/console run dev` and
-open `http://localhost:3000`. Raw artifacts are encrypted under `data/artifacts`.
-The checked-in encryption key is an explicitly insecure local example.
-
-Without Compose, start PostgreSQL 16 and run:
+Without Compose:
 
 ```bash
 set -a; source .env; set +a
-npm run db:migrate
-npm run db:seed
+npm run db:migrate               # MIGRATION_DATABASE_URL (owner)
+npm run db:seed                  # synthetic organisations + default rule sets
+psql "$MIGRATION_DATABASE_URL" -c "ALTER ROLE access_request LOGIN PASSWORD 'local-placeholder'; ALTER ROLE access_worker LOGIN PASSWORD 'local-placeholder'"
 npm -w @access/core-api run dev
-# separate terminal
 npm -w @access/worker run dev
 ```
 
-## Exercise the flow
+Synthetic organisation `11111111-…` uses the (mock) connector destination;
+`22222222-…` uses the manual destination workflow. In the console choose a
+role and use the synthetic fixtures (`complete`, `missing-insurance`,
+`ambiguous-identity`, `urgent`) or the structured intake form.
 
-All identifiers and content below are synthetic.
-
-```bash
-TENANT=11111111-1111-4111-8111-111111111111
-REFERRAL=$(node -e 'console.log(crypto.randomUUID())')
-COMMAND=$(node -e 'console.log(crypto.randomUUID())')
-CORRELATION=$(node -e 'console.log(crypto.randomUUID())')
-curl -sS http://localhost:3001/v1/referrals -H 'content-type: application/json' \
-  -d "{\"command_id\":\"$COMMAND\",\"tenant_id\":\"$TENANT\",\"referral_id\":\"$REFERRAL\",\"correlation_id\":\"$CORRELATION\",\"expected_version\":0,\"filename\":\"synthetic.txt\",\"media_type\":\"text/plain\",\"content_base64\":\"c3ludGhldGljIHJlZmVycmFs\",\"fixture\":\"complete\"}"
-curl -sS -H "x-tenant-id: $TENANT" "http://localhost:3001/v1/referrals/$REFERRAL"
-```
-
-Use `missing-insurance`, `ambiguous-identity`, or `urgent` as fixture values to
-open a human exception. Resolve one with `POST /v1/referrals/:id/resolve`, the
-tenant header, a new command/correlation UUID, current `expected_version`, a
-resolution (`confirm_identity`, `provide_insurance`, `approve_deferred`, or
-`reject`) and a nonempty note. Start the worker with
-`CONNECTOR_FAULT_MODE=committed-timeout` to prove reconciliation.
-
-## Checks and qualification
+## Checks
 
 ```bash
-npm run format
-npm run lint
-npm run typecheck
+npm run format && npm run lint && npm run typecheck
 npm run test:unit
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/access_test npm run test:integration
-npm run test:fault
-npm test
-npm run build
-npm run validate:infra
-npm run check:secrets
-LOAD_BASE_URL=http://localhost:3001 npm run load
+npm run qualify:synthetic          # Flows A-I; set QUALIFICATION_REPORT=report.json
+npm run build && npm run validate:infra && npm run check:secrets
 ```
 
-The real-Postgres integration suite reapplies migrations, forces a rollback at a
-write boundary, and checks missing/cross-tenant context across every tenant
-table. CI provisions PostgreSQL and runs the complete suite. The provisional
-load profile assumes one small practice, 25 active tenants, a burst of 10, 200
-health requests and p95 under 250 ms; these are measurement inputs, not an SLO.
-Artifact limit is 10 MB. The owner must approve or revise limits using recorded
-staging evidence before release.
+The integration project drops and re-migrates the test database, then runs
+every PostgreSQL suite with the real `access_request`/`access_worker` logins.
+In CI a missing database fails the build; skipped tests fail the build.
 
 ## Deployment
 
-Build and push one immutable image and provision Supabase with three credentials.
-`MIGRATION_DATABASE_URL` is used only by `npm run db:migrate`; the API receives
-only `API_DATABASE_URL` (`access_request`) and the worker only
-`WORKER_DATABASE_URL` (`access_worker`). Run every ordered migration, then run
-`supabase/provisioning/runtime-roles.sql` as the owner with passwords supplied as
-psql variables. Runtime startup in staging/production rejects the wrong role,
-superuser/BYPASSRLS, or table ownership. Never reuse the migration URL at runtime.
+See [docs/deployment.md](docs/deployment.md). Profiles: `local`,
+`synthetic-staging`, `client-pilot`, `production`. Azure Container Apps is the
+reference production target (`infra/azure`), with Supabase for PostgreSQL,
+Auth and Storage and Vercel for the console. Railway is synthetic-staging only.
 
-```bash
-docker build -t "$REGISTRY/access:$GIT_SHA" .
-docker push "$REGISTRY/access:$GIT_SHA"
-RESOURCE_GROUP=access-prod PREFIX=access-prod IMAGE="$REGISTRY/access:$GIT_SHA" \
-  DATABASE_URL="$SUPABASE_DATABASE_URL" infra/azure/deploy.sh
-vercel deploy --prod --cwd apps/console
-# Railway: create two services from the same image. Select
-# infra/railway/api.railway.toml and infra/railway/worker.railway.toml respectively.
-```
-
-The Railway API has a public domain, `/ready`, `API_DATABASE_URL`,
-`ARTIFACT_ROOT`, `ARTIFACT_ENCRYPTION_KEY`, `CONSOLE_ORIGIN`, and
-`ALLOW_SYNTHETIC_TENANT_CONTEXT=true`. The worker has no domain or HTTP health
-check, starts `node apps/worker/dist/main.js`, has one replica, and receives only
-`WORKER_DATABASE_URL`, `DISPATCH_MAX_ATTEMPTS`, `RECONCILE_MAX_ATTEMPTS`, and
-`RECONCILE_BASE_SECONDS`. Vercel receives only `VITE_CORE_API_URL`; it receives
-no database or service-role secret. Configure the API and worker as separate Azure Container App revisions from the
-same image. Store database and
-artifact keys in Azure Key Vault/Container Apps secrets, require database TLS,
-restrict connector egress, and set the console's `VITE_CORE_API_URL` at build
-time. Vercel receives only the public core API URL and workforce-auth settings,
-never a Supabase service role or storage key.
-
-Before real data, validate Bicep with `az bicep build --file
-infra/azure/main.bicep`, deploy isolated staging, execute the full suite, scan
-image/dependencies, exercise every alert/runbook, and perform the documented
-PITR restore. Capture deployment output, test logs, image digest, RLS role
-inspection, restore RPO/RTO, load JSON and evidence-chain comparison in the
-release record. Cloud deployment, real malware scanning, workforce JWT
-verification, managed object storage, production key rotation, production
-telemetry/alerting, real connector qualification, DAST/penetration testing,
-formal privacy/security approval, short-lived execution grants and restore
-evidence remain explicit pre-live gates. **This remains synthetic staging only.**
-
-See [the architecture ADR](docs/adr/0001-production-slice.md), [security
-assumptions](docs/security.md), and [operator runbooks](docs/runbooks.md).
+The historical planning documents (`PRODUCT_ASSESSMENT.md`,
+`ARCHITECTURE_REVIEW.md`, `IMPLEMENTATION_HANDOFF.md`, `NEXT_CHAT_PROMPT.md`)
+describe the pre-v1.1 slice and are kept for context only.

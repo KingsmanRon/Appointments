@@ -35,7 +35,7 @@ jobs:
       - name: Unit tests (lifecycle, rules, policy, config, storage, scanner, logging, migrations, connector faults)
         run: npx vitest run --project unit --reporter=verbose --reporter=json --outputFile.json=unit-report.json
       - name: Assert unit suite ran without skips
-        run: node scripts/assert-test-report.mjs unit-report.json 74
+        run: node scripts/assert-test-report.mjs unit-report.json 75
       - name: PostgreSQL integration (migrations, RLS, dispatcher, ambiguity, poison, idempotency, outcomes, metrics, rules, artifacts, auth/tenancy, acceptance 1-29, E2E flows A-I)
         env:
           QUALIFICATION_REPORT: qualification-report.json
