@@ -1,5 +1,5 @@
 {
-  "name": "@access/policy",
+  "name": "@access/config",
   "version": "0.1.0",
   "type": "module",
   "exports": "./dist/index.js",

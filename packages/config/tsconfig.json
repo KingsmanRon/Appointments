@@ -4,16 +4,11 @@
   "references": [
     {
       "path": "../contracts"
-    },
-    {
-      "path": "../domain"
-    },
-    {
-      "path": "../rules"
     }
   ],
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    "types": ["node"]
   }
 }

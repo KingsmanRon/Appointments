@@ -1,5 +1,5 @@
 {
-  "name": "@access/policy",
+  "name": "@access/rules",
   "version": "0.1.0",
   "type": "module",
   "exports": "./dist/index.js",
@@ -7,6 +7,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@access/contracts": "*"
+    "@access/contracts": "*",
+    "zod": "^4.1.8"
   }
 }
