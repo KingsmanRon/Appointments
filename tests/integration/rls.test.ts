@@ -30,6 +30,9 @@ const TENANT_TABLES = [
   "access_rule_sets",
   "organisation_memberships",
   "access_audit_log",
+  "appointment_requests",
+  "appointments",
+  "appointment_slot_holds",
 ];
 
 describe.runIf(databaseEnabled)(

@@ -644,9 +644,10 @@ describe.runIf(databaseEnabled)("ACCESS v1.1 acceptance suite", () => {
     });
     expect(res.statusCode).toBe(422);
     expect(res.json().error).toBe("CASE_TYPE_DISABLED");
+    // Tamper: a still-disabled case type with a consequential outbox item.
     const caseId = randomUUID();
     await ownerPool().query(
-      "INSERT INTO access_cases(id,tenant_id,case_type,source_channel,current_state,opened_at) VALUES($1,$2,'APPOINTMENT_REQUEST','API','DESTINATION_PENDING',now())",
+      "INSERT INTO access_cases(id,tenant_id,case_type,source_channel,current_state,opened_at) VALUES($1,$2,'STATUS_ENQUIRY','API','DESTINATION_PENDING',now())",
       [caseId, tenant],
     );
     const executionId = randomUUID();
