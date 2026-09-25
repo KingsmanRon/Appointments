@@ -166,7 +166,7 @@ export async function transitionCase(
     details?: object;
   },
 ): Promise<CaseRow> {
-  transition(caseRow.current_state, input.to);
+  transition(caseRow.current_state, input.to, caseRow.case_type);
   const terminal = isTerminal(input.to);
   if (terminal && !input.resolution)
     throw new AppError(

@@ -15,8 +15,17 @@ export const CASE_TYPES = [
   "RESCHEDULING_REQUEST",
 ] as const;
 export type CaseType = (typeof CASE_TYPES)[number];
-/** Only REFERRAL executes in v1. Every other type fails closed. */
-export const ENABLED_CASE_TYPES: readonly CaseType[] = ["REFERRAL"];
+/**
+ * Case types that execute. STATUS_ENQUIRY and MISSING_INFORMATION stay
+ * defined but fail closed: they are interactions on a referral, not
+ * independent automated cases.
+ */
+export const ENABLED_CASE_TYPES: readonly CaseType[] = [
+  "REFERRAL",
+  "APPOINTMENT_REQUEST",
+  "CANCELLATION_REQUEST",
+  "RESCHEDULING_REQUEST",
+];
 /**
  * Appointment operations cases. They are never created directly: an
  * APPOINTMENT_REQUEST starts from a referral that is ready for booking, and

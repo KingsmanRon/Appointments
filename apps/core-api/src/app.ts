@@ -6,6 +6,7 @@ import { ZodError, z } from "zod";
 import {
   CASE_ACTIONS,
   CASE_TYPES,
+  ENABLED_CASE_TYPES,
   QUEUE_FILTERS,
   caseActionSchema,
   cohortQuerySchema,
@@ -29,7 +30,7 @@ import {
   verifyEvidenceChain,
 } from "@access/db";
 import { errorFields, log, Metrics } from "@access/observability";
-import { assertCaseTypeEnabled, authorize } from "@access/policy";
+import { assertDirectlyCreatable, authorize } from "@access/policy";
 import { RuleValidationError } from "@access/rules";
 import type { AuthContext, Authenticator } from "./auth.js";
 import { caseDetail, queue } from "./queries.js";
@@ -129,19 +130,31 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     );
     return reply.code(result.deduplicated ? 200 : 201).send(result);
   });
-  // Generic case creation: only enabled case types execute.
+  // Generic case creation: only referrals are created directly; appointment
+  // operations cases start from a referral or a committed appointment.
   app.post("/v1/cases", async (req, reply) => {
     const a = await auth(req);
     authorize(a.role, "referral.ingest");
     const { case_type, ...rest } = createCaseRequestSchema.parse(req.body);
-    assertCaseTypeEnabled(case_type);
+    assertDirectlyCreatable(case_type);
     const input = ingestRequestSchema.parse(rest);
     const result = await deps.service.ingestReferral(a, input);
     return reply.code(result.deduplicated ? 200 : 201).send(result);
   });
   app.get("/v1/case-types", async (req) => {
     await auth(req);
-    return CASE_TYPES.map((t) => ({ case_type: t, enabled: t === "REFERRAL" }));
+    return CASE_TYPES.map((t) => ({
+      case_type: t,
+      enabled: ENABLED_CASE_TYPES.includes(t),
+      created_from:
+        t === "REFERRAL"
+          ? "intake"
+          : t === "APPOINTMENT_REQUEST"
+            ? "referral"
+            : ENABLED_CASE_TYPES.includes(t)
+              ? "appointment"
+              : null,
+    }));
   });
 
   app.get("/v1/cases", async (req) => {

@@ -121,6 +121,19 @@ function assertChannel(channel: Channel) {
     );
 }
 const SAFETY_HOLDS: WorkItemKind[] = ["SAFETY", "FILE_SAFETY"];
+/**
+ * Appointment operations cases change only through their own commands
+ * (appointment-actions); referral actions, interactions and imports never
+ * touch them.
+ */
+function referralOnly(caseType: string, what: string) {
+  if (caseType !== "REFERRAL")
+    throw new AppError(
+      422,
+      "REFERRAL_CASES_ONLY",
+      `${what} apply to referrals; use appointment actions for ${caseType}`,
+    );
+}
 
 export class CaseService {
   constructor(private deps: ServiceDeps) {}
@@ -768,6 +781,7 @@ export class CaseService {
       );
       if (!kase.rows[0]) throw notFound();
       assertCaseTypeEnabled(kase.rows[0].case_type);
+      referralOnly(kase.rows[0].case_type, "interactions");
       return null;
     });
     if (early) return early;
@@ -790,6 +804,7 @@ export class CaseService {
         executeCommand(c, envelope, async () => {
           let caseRow = await lockCase(c, auth.tenantId, caseId);
           assertCaseTypeEnabled(caseRow.case_type);
+          referralOnly(caseRow.case_type, "interactions");
           assertVersion(caseRow, input.expected_version);
           if (
             isTerminal(caseRow.current_state) &&
@@ -925,6 +940,7 @@ export class CaseService {
         const caseRow = await lockCase(c, auth.tenantId, caseId);
         // Disabled case types fail closed before anything else is considered.
         assertCaseTypeEnabled(caseRow.case_type);
+        referralOnly(caseRow.case_type, "case actions");
         assertVersion(caseRow, action.expected_version);
         const r = await this.referral(c, auth.tenantId, caseId);
         const out = await this.dispatchAction(c, ctx, caseRow, r, action);
@@ -1652,6 +1668,7 @@ export class CaseService {
         for (const row of input.rows) {
           const caseRow = await lockCase(c, auth.tenantId, row.case_id);
           assertCaseTypeEnabled(caseRow.case_type);
+          referralOnly(caseRow.case_type, "imported outcomes");
           const result = await recordObservation(c, ctx, caseRow, {
             type: row.observation_type,
             occurredAt: new Date(row.occurred_at),
