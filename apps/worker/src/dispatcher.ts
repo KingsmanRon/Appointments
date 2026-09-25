@@ -278,6 +278,11 @@ export class Dispatcher {
         };
       case "AMBIGUOUS":
         return { kind: "ambiguous", code: "CONNECTOR_REPORTED_AMBIGUOUS" };
+      case "NOT_COMMITTED":
+        // A read-back result has no meaning for a write: its effect is unknown.
+        return consequential
+          ? { kind: "ambiguous", code: "UNEXPECTED_READBACK_RESULT" }
+          : { kind: "retryable", code: "UNEXPECTED_READBACK_RESULT" };
     }
   }
   /** Thrown errors: only an explicit known-not-sent error is retried. */

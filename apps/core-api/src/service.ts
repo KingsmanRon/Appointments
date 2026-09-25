@@ -1358,6 +1358,12 @@ export class CaseService {
         });
         return { caseRow: row };
       }
+      case "start_booking":
+        throw new AppError(
+          422,
+          "CASE_TYPE_DISABLED",
+          "appointment operations are not enabled",
+        );
     }
   }
 

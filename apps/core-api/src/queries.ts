@@ -25,6 +25,12 @@ const FILTERS: Record<QueueFilter, string> = {
   ready_for_booking: "c.current_state='READY_FOR_BOOKING'",
   waiting: "c.current_state='WAITING'",
   booked: "c.current_state='BOOKED'",
+  booking_in_progress:
+    "c.case_type='APPOINTMENT_REQUEST' AND c.current_state NOT IN ('BOOKED','CLOSED','REJECTED')",
+  reschedule:
+    "c.case_type='RESCHEDULING_REQUEST' AND c.current_state NOT IN ('BOOKED','CLOSED','REJECTED')",
+  cancellation:
+    "c.case_type='CANCELLATION_REQUEST' AND c.current_state NOT IN ('BOOKED','CLOSED','REJECTED')",
   closed: "c.current_state IN ('CLOSED','REJECTED')",
   exceptions: "c.current_state='EXCEPTION'",
 };
