@@ -68,9 +68,12 @@ describe("mock destination semantics", () => {
   it("capability gate enables only configured AND implemented capabilities", () => {
     const gate = new CapabilityGate(new MockConnector(), [
       "referral.create",
-      "appointment.create",
+      "message.send",
     ]);
     expect(gate.isEnabled("referral.create")).toBe(true);
+    // Configured but not implemented by the mock: never enabled.
+    expect(gate.isEnabled("message.send")).toBe(false);
+    // Implemented but not configured: never enabled.
     expect(gate.isEnabled("appointment.create")).toBe(false);
     expect(gate.isEnabled("appointment.status.read")).toBe(false);
     expect(
