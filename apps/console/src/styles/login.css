@@ -1,14 +1,26 @@
 /* Login: the one full brand stage. */
 .login {
+  /* The panel sits inside the stage, not on the browser edge: its centre is
+     at ~74% of the width on small laptops, 67.5% at 1440px and 65% on wide
+     screens, and it never comes closer to the edge than the gutter. */
+  --panel-w: 420px;
+  --panel-centre: clamp(
+    65vw,
+    47.4vw + 290px,
+    100vw - var(--gutter) - var(--panel-w) / 2
+  );
+  --panel-left: calc(var(--panel-centre) - var(--panel-w) / 2);
   position: relative;
   isolation: isolate;
   overflow: hidden;
   min-height: 100vh;
   min-height: 100svh;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  grid-template-columns: minmax(0, 1fr) minmax(340px, var(--panel-w));
   column-gap: var(--s-8);
-  padding: clamp(1.5rem, 5vh, 3.5rem) var(--gutter);
+  padding: clamp(1.5rem, 5vh, 3.5rem)
+    calc(100vw - var(--panel-centre) - var(--panel-w) / 2)
+    clamp(1.5rem, 5vh, 3.5rem) var(--gutter);
   background: var(--c-night);
   color: var(--c-night-ink);
 }
@@ -33,6 +45,7 @@
   );
 }
 .scene__atmos {
+  --glow-x: 49%; /* warm light over Booked, just left of the panel */
   position: absolute;
   inset: -10%;
   background:
@@ -42,7 +55,7 @@
       transparent 70%
     ),
     radial-gradient(
-      34% 30% at 58% 68%,
+      34% 30% at var(--glow-x) 68%,
       color-mix(in srgb, var(--c-accent-bright) 8%, transparent),
       transparent 72%
     );
@@ -58,8 +71,14 @@
 .scene__box {
   position: absolute;
   left: calc(var(--gutter) - 1.5%);
-  bottom: 2vh;
-  width: min(60vw, 1040px);
+  /* High enough that the line meets the panel's side, not its corner. */
+  bottom: 7vh;
+  /* Sized from the panel: Booked (x = 0.9) lands 3.5rem short of its edge, so
+     the line climbs to the form at every desktop width. */
+  width: min(
+    1100px,
+    calc((var(--panel-left) - 3.5rem - var(--gutter) + 1.5%) / 0.9)
+  );
   aspect-ratio: 5 / 3;
 }
 .scene__layer {
@@ -357,10 +376,12 @@
   text-align: center;
 }
 
-/* 13" laptops: tighter stage ------------------------------------------------- */
-@media (max-width: 1279px) {
-  .scene__box {
-    width: min(58vw, 760px);
+/* Narrow stages keep three labels: where the line starts, turns and ends. */
+@media (max-width: 999px) {
+  .scene__label--1,
+  .scene__label--2,
+  .scene__label--4 {
+    display: none;
   }
 }
 
@@ -407,12 +428,10 @@
     inset: 3.5rem -20% auto -20%;
     height: clamp(12rem, 58vw, 20rem);
   }
+  .scene__atmos {
+    --glow-x: 58%;
+  }
   .scene__label {
     font-size: var(--t-2xs);
-  }
-  .scene__label--1,
-  .scene__label--2,
-  .scene__label--4 {
-    display: none;
   }
 }

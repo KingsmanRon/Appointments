@@ -77,7 +77,13 @@ routes are unchanged.
 | Focal      | One anonymous referral object (no text, no data)         | Travels the line once on load | Always on the path; its shadow is drawn in the mid plane at the same point |
 | Near       | The destination gate: a translucent frame at station 4   | Strongest (still ≤ 14px)      | The token passes behind it; it never covers labels or the form             |
 | Atmosphere | Light from upper left, grain                             | Slow, small                   | Separates planes; never washes out text                                    |
-| Type + UI  | Wordmark, headline, product boundary line, sign-in panel | Stable                        | Always above every plane; the panel overlaps the stage edge (depth cue)    |
+| Type + UI  | Wordmark, headline, product boundary line, sign-in panel | Stable                        | Always above every plane; the line ends just short of the panel            |
+
+On desktop the sign-in panel sits inside the stage rather than on the browser
+edge: its centre is at 65–70% of the width on wide screens (about 74% at
+1100px, where the copy needs the room), and the stage is sized from the
+panel's edge so Booked lands 3.5rem short of it and the line's last segment
+meets the panel's side.
 
 Opening: line drawn, token at Received. Midpoint: token passes behind the
 gate at Destination. Resolved: token rests at Booked, gate settled. On
