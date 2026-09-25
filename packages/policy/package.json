@@ -5,5 +5,8 @@
   "exports": "./dist/index.js",
   "scripts": {
     "build": "tsc -b"
+  },
+  "dependencies": {
+    "@access/contracts": "*"
   }
 }

@@ -8,10 +8,13 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "@access/config": "*",
     "@access/contracts": "*",
     "@access/db": "*",
     "@access/domain": "*",
     "@access/observability": "*",
+    "@access/policy": "*",
+    "@access/rules": "*",
     "pg": "^8.16.3"
   }
 }

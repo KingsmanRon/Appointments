@@ -1,6 +1,6 @@
 # ADR 0001: production slice foundations
 
-**Status:** Accepted · **Date:** 2026-09-23
+**Status:** Accepted; aggregate, lifecycle and identity decisions superseded by [ADR 0002](0002-access-case-aggregate.md) and [ADR 0003](0003-execution-identity-storage.md) · **Date:** 2026-09-23
 
 ## Context and decision
 

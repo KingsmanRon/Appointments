@@ -5,3 +5,5 @@ coverage/
 .env
 data/
 *.tsbuildinfo
+scratch/
+qualification-report.json
