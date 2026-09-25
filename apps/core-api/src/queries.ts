@@ -1,11 +1,30 @@
-import type { CaseState, QueueFilter, StaffRole } from "@access/contracts";
 import {
+  isAppointmentCaseType,
+  type AppointmentWorkflowStatus,
+  type CaseState,
+  type QueueFilter,
+  type StaffRole,
+} from "@access/contracts";
+import {
+  appointmentsForReferral,
+  bookingReadiness,
   caseMetrics,
+  findAppointment,
+  findRequest,
   notFound,
+  referralAccessStatus,
+  requestsForReferral,
   verifyEvidenceChain,
+  type AppointmentRow,
+  type CaseRow,
   type DbClient,
 } from "@access/db";
-import { nextRequiredAction } from "@access/domain";
+import {
+  appointmentNextAction,
+  availabilityIsFresh,
+  nextRequiredAction,
+  workflowFinished,
+} from "@access/domain";
 import { can } from "@access/policy";
 
 /** Patient-safe display reference derived from the opaque case id. */
@@ -18,20 +37,23 @@ const FILTERS: Record<QueueFilter, string> = {
   needs_attention: `(c.current_state IN ('IDENTITY_PENDING','INFORMATION_MISSING','EXCEPTION')
      OR (c.current_state='READY' AND coalesce(r.destination_mode,'MANUAL')='MANUAL')
      OR (c.current_state IN ('READY_FOR_BOOKING','WAITING') AND r.follow_up_due_at <= now())
+     OR (c.case_type<>'REFERRAL' AND c.current_state='READY_FOR_BOOKING')
      OR EXISTS (SELECT 1 FROM work_items w WHERE w.tenant_id=c.tenant_id AND w.case_id=c.id AND w.status='OPEN'))`,
   identity_pending: "c.current_state='IDENTITY_PENDING'",
   information_missing: "c.current_state='INFORMATION_MISSING'",
   ready: "c.current_state IN ('READY','DESTINATION_PENDING')",
-  ready_for_booking: "c.current_state='READY_FOR_BOOKING'",
-  waiting: "c.current_state='WAITING'",
-  booked: "c.current_state='BOOKED'",
+  // Referral lenses; appointment operations cases have their own below.
+  ready_for_booking:
+    "c.case_type='REFERRAL' AND c.current_state='READY_FOR_BOOKING'",
+  waiting: "c.case_type='REFERRAL' AND c.current_state='WAITING'",
+  booked: "c.case_type='REFERRAL' AND c.current_state='BOOKED'",
   booking_in_progress:
     "c.case_type='APPOINTMENT_REQUEST' AND c.current_state NOT IN ('BOOKED','CLOSED','REJECTED')",
   reschedule:
     "c.case_type='RESCHEDULING_REQUEST' AND c.current_state NOT IN ('BOOKED','CLOSED','REJECTED')",
   cancellation:
     "c.case_type='CANCELLATION_REQUEST' AND c.current_state NOT IN ('BOOKED','CLOSED','REJECTED')",
-  closed: "c.current_state IN ('CLOSED','REJECTED')",
+  closed: "c.case_type='REFERRAL' AND c.current_state IN ('CLOSED','REJECTED')",
   exceptions: "c.current_state='EXCEPTION'",
 };
 
@@ -54,6 +76,8 @@ interface QueueRow {
   latest_execution_status: string | null;
   latest_execution_escalated: boolean | null;
   open_work: string[] | null;
+  workflow_status: AppointmentWorkflowStatus | null;
+  origin_referral_case_id: string | null;
 }
 
 export async function queue(
@@ -72,9 +96,11 @@ export async function queue(
                 || coalesce(r.rule_decision->'unmet_prerequisites','[]'::jsonb)) x) AS missing,
             e.status AS latest_execution_status, e.escalated_at IS NOT NULL AS latest_execution_escalated,
             (SELECT array_agg(w.kind ORDER BY w.created_at) FROM work_items w
-              WHERE w.tenant_id=c.tenant_id AND w.case_id=c.id AND w.status='OPEN') AS open_work
+              WHERE w.tenant_id=c.tenant_id AND w.case_id=c.id AND w.status='OPEN') AS open_work,
+            ar.workflow_status, ar.origin_referral_case_id
        FROM access_cases c
        LEFT JOIN referrals r ON r.tenant_id=c.tenant_id AND r.case_id=c.id
+       LEFT JOIN appointment_requests ar ON ar.tenant_id=c.tenant_id AND ar.case_id=c.id
        LEFT JOIN LATERAL (SELECT status, escalated_at FROM executions x WHERE x.tenant_id=c.tenant_id AND x.case_id=c.id
                            ORDER BY x.created_at DESC LIMIT 1) e ON TRUE
       WHERE c.tenant_id=$1 AND ${FILTERS[filter]}
@@ -95,23 +121,37 @@ export async function queue(
     owner: row.current_owner,
     exception_reason: row.exception_reason,
     open_work_items: row.open_work ?? [],
-    next_action: nextRequiredAction({
-      state: row.current_state,
-      destinationMode: row.destination_mode,
-      missing: row.missing ?? [],
-      exceptionReason: row.exception_reason,
-    }),
+    next_action: row.workflow_status
+      ? appointmentNextAction({
+          caseType: row.case_type,
+          state: row.current_state,
+          workflowStatus: row.workflow_status,
+          exceptionReason: row.exception_reason,
+        })
+      : nextRequiredAction({
+          state: row.current_state,
+          destinationMode: row.destination_mode,
+          missing: row.missing ?? [],
+          exceptionReason: row.exception_reason,
+        }),
+    workflow_status: row.workflow_status,
+    origin_referral_case_id: row.origin_referral_case_id,
+    origin_display_ref: row.origin_referral_case_id
+      ? displayRef(row.origin_referral_case_id)
+      : null,
     destination_status: destinationStatus(row),
     outcome_status:
       row.current_state === "BOOKED"
         ? "BOOKED"
         : row.resolution_code
           ? `CLOSED: ${row.resolution_code}`
-          : row.current_state === "WAITING"
-            ? "Awaiting response"
-            : row.current_state === "READY_FOR_BOOKING"
-              ? "Awaiting booking"
-              : "Not yet bookable",
+          : row.workflow_status
+            ? "In progress"
+            : row.current_state === "WAITING"
+              ? "Awaiting response"
+              : row.current_state === "READY_FOR_BOOKING"
+                ? "Awaiting booking"
+                : "Not yet bookable",
     follow_up_due_at: row.follow_up_due_at,
   }));
 }
@@ -215,6 +255,7 @@ export async function caseDetail(
     ),
   ]);
   const chain = await verifyEvidenceChain(c, tenantId, caseId);
+  const booking = await bookingView(c, tenantId, caseRow, role);
   return {
     case: { ...caseRow, display_ref: displayRef(caseId) },
     referral: r
@@ -224,16 +265,23 @@ export async function caseDetail(
           supplied_fields: showPayloads ? r.supplied_fields : "[restricted]",
         }
       : null,
-    next_action: nextRequiredAction({
-      state: caseRow.current_state,
-      destinationMode: r?.destination_mode ?? null,
-      missing: [
-        ...(r?.rule_decision?.missing_documents ?? []),
-        ...(r?.rule_decision?.missing_fields ?? []),
-        ...(r?.rule_decision?.unmet_prerequisites ?? []),
-      ],
-      exceptionReason: caseRow.exception_reason,
-    }),
+    next_action:
+      booking.nextAction ??
+      nextRequiredAction({
+        state: caseRow.current_state,
+        destinationMode: r?.destination_mode ?? null,
+        missing: [
+          ...(r?.rule_decision?.missing_documents ?? []),
+          ...(r?.rule_decision?.missing_fields ?? []),
+          ...(r?.rule_decision?.unmet_prerequisites ?? []),
+        ],
+        exceptionReason: caseRow.exception_reason,
+      }),
+    access_status: booking.accessStatus,
+    booking: booking.eligibility,
+    appointment_request: booking.request,
+    appointment_requests: booking.requests,
+    appointments: booking.appointments,
     interactions: interactions.rows,
     observations: observations.rows,
     evidence: { verification: chain, events: events.rows },
@@ -242,5 +290,240 @@ export async function caseDetail(
     transitions: transitions.rows,
     effort: effort.rows,
     metrics: await caseMetrics(c, tenantId, caseId),
+  };
+}
+
+/** Appointment fields shown to every role; the patient reference is not. */
+function appointmentView(a: AppointmentRow, role: StaffRole) {
+  return {
+    id: a.id,
+    source_case_id: a.source_case_id,
+    origin_referral_case_id: a.origin_referral_case_id,
+    external_reference: a.external_reference,
+    slot_reference: a.slot_reference,
+    provider_reference: a.provider_reference,
+    location_reference: a.location_reference,
+    service_code: a.service_code,
+    patient_reference:
+      a.patient_reference && !can(role, "case.read_patient_details")
+        ? "[restricted]"
+        : a.patient_reference,
+    starts_at: a.starts_at,
+    ends_at: a.ends_at,
+    timezone: a.timezone,
+    status: a.status,
+    committed_at: a.committed_at,
+    commit_source: a.commit_source,
+    cancelled_at: a.cancelled_at,
+    cancellation_source: a.cancellation_source,
+    replaces_appointment_id: a.replaces_appointment_id,
+    superseded_by_id: a.superseded_by_id,
+    confirmation_status: a.confirmation_status,
+    confirmed_at: a.confirmed_at,
+    confirmation_method: a.confirmation_method,
+    confirmed_by: a.confirmed_by,
+    version: a.version,
+  };
+}
+
+/**
+ * The booking side of a case: for a referral, whether it may start booking,
+ * its requests, appointments and plain-language status; for an appointment
+ * operations case, its request (availability, selection, hold, pending
+ * step) and the appointments it concerns.
+ */
+async function bookingView(
+  c: DbClient,
+  tenantId: string,
+  caseRow: CaseRow,
+  role: StaffRole,
+) {
+  if (caseRow.case_type === "REFERRAL") {
+    const requests = await requestsForReferral(c, tenantId, caseRow.id);
+    const states = new Map<string, CaseState>();
+    for (const r of requests) {
+      const k = await c.query<{ current_state: CaseState }>(
+        "SELECT current_state FROM access_cases WHERE tenant_id=$1 AND id=$2",
+        [tenantId, r.case_id],
+      );
+      states.set(r.case_id, k.rows[0]!.current_state);
+    }
+    const readiness = await bookingReadiness(c, tenantId, caseRow);
+    const active = requests.find((r) => !workflowFinished(r.workflow_status));
+    return {
+      nextAction: active
+        ? active.case_type === "APPOINTMENT_REQUEST"
+          ? "Booking in progress: continue it from the appointment request"
+          : "Appointment change in progress: continue it from its request"
+        : null,
+      accessStatus: await referralAccessStatus(c, tenantId, caseRow),
+      eligibility: { eligible: readiness.eligible, reasons: readiness.reasons },
+      request: null,
+      requests: requests.map((r) => ({
+        case_id: r.case_id,
+        display_ref: displayRef(r.case_id),
+        case_type: r.case_type,
+        state: states.get(r.case_id) ?? null,
+        workflow_status: r.workflow_status,
+        original_appointment_id: r.original_appointment_id,
+        appointment_id: r.appointment_id,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      })),
+      appointments: (
+        await appointmentsForReferral(c, tenantId, caseRow.id)
+      ).map((a) => appointmentView(a, role)),
+    };
+  }
+  if (!isAppointmentCaseType(caseRow.case_type))
+    return {
+      nextAction: null,
+      accessStatus: null,
+      eligibility: null,
+      request: null,
+      requests: [],
+      appointments: [],
+    };
+  const request = await findRequest(c, tenantId, caseRow.id);
+  if (!request)
+    return {
+      nextAction: null,
+      accessStatus: null,
+      eligibility: null,
+      request: null,
+      requests: [],
+      appointments: [],
+    };
+  const hold = request.current_hold_id
+    ? (
+        await c.query<{
+          id: string;
+          slot_reference: string;
+          status: string;
+          created_at: Date;
+          expires_at: Date;
+          closed_at: Date | null;
+        }>(
+          "SELECT id,slot_reference,status,created_at,expires_at,closed_at FROM appointment_slot_holds WHERE tenant_id=$1 AND id=$2",
+          [tenantId, request.current_hold_id],
+        )
+      ).rows[0]
+    : undefined;
+  const pending = request.pending_execution_id
+    ? (
+        await c.query<{
+          id: string;
+          operation: string;
+          status: string;
+          escalated_at: Date | null;
+          superseded_at: Date | null;
+        }>(
+          "SELECT id,operation,status,escalated_at,superseded_at FROM executions WHERE tenant_id=$1 AND id=$2",
+          [tenantId, request.pending_execution_id],
+        )
+      ).rows[0]
+    : undefined;
+  const appointments: AppointmentRow[] = [];
+  for (const id of [request.original_appointment_id, request.appointment_id])
+    if (id) {
+      const a = await findAppointment(c, tenantId, id);
+      if (a) appointments.push(a);
+    }
+  const current = appointments.find((a) => a.id === request.appointment_id);
+  const origin = request.origin_referral_case_id
+    ? (
+        await c.query<CaseRow>(
+          "SELECT id,case_type,current_state,resolution_code FROM access_cases WHERE tenant_id=$1 AND id=$2",
+          [tenantId, request.origin_referral_case_id],
+        )
+      ).rows[0]
+    : undefined;
+  return {
+    nextAction: appointmentNextAction({
+      caseType: caseRow.case_type,
+      state: caseRow.current_state,
+      workflowStatus: request.workflow_status,
+      exceptionReason: caseRow.exception_reason,
+      confirmationStatus: current?.confirmation_status ?? null,
+    }),
+    accessStatus: origin
+      ? await referralAccessStatus(c, tenantId, origin)
+      : null,
+    eligibility: null,
+    request: {
+      case_type: request.case_type,
+      workflow_status: request.workflow_status,
+      version: request.version,
+      origin_referral_case_id: request.origin_referral_case_id,
+      origin_display_ref: request.origin_referral_case_id
+        ? displayRef(request.origin_referral_case_id)
+        : null,
+      original_appointment_id: request.original_appointment_id,
+      appointment_id: request.appointment_id,
+      booking_context: request.booking_context,
+      search: request.search,
+      timezone: request.timezone,
+      availability: request.availability
+        ? {
+            observed_at: request.availability.observed_at,
+            fresh: availabilityIsFresh(request.availability_observed_at),
+            slots: request.availability.slots,
+          }
+        : null,
+      selected_slot: request.selected_slot,
+      selected_at: request.selected_at,
+      hold: hold ?? null,
+      pending_execution: pending
+        ? {
+            id: pending.id,
+            operation: pending.operation,
+            status: pending.status,
+            escalated: Boolean(pending.escalated_at),
+            superseded: Boolean(pending.superseded_at),
+          }
+        : null,
+      cancellation_reason: request.cancellation_reason,
+      last_failure_code: request.last_failure_code,
+      last_failure_at: request.last_failure_at,
+      recheck_requested_at: request.recheck_requested_at,
+      created_at: request.created_at,
+      updated_at: request.updated_at,
+    },
+    requests: [],
+    appointments: appointments.map((a) => appointmentView(a, role)),
+  };
+}
+
+/** One appointment, the cases around it and any change in progress. */
+export async function appointmentDetail(
+  c: DbClient,
+  tenantId: string,
+  appointmentId: string,
+  role: StaffRole,
+) {
+  const appointment = await findAppointment(c, tenantId, appointmentId);
+  if (!appointment) throw notFound("appointment");
+  const changes = await c.query<{
+    case_id: string;
+    case_type: string;
+    workflow_status: AppointmentWorkflowStatus;
+    version: number;
+    created_at: Date;
+  }>(
+    `SELECT case_id,case_type,workflow_status,version,created_at FROM appointment_requests
+      WHERE tenant_id=$1 AND original_appointment_id=$2 ORDER BY created_at`,
+    [tenantId, appointmentId],
+  );
+  return {
+    appointment: appointmentView(appointment, role),
+    source_display_ref: displayRef(appointment.source_case_id),
+    origin_display_ref: appointment.origin_referral_case_id
+      ? displayRef(appointment.origin_referral_case_id)
+      : null,
+    changes: changes.rows.map((r) => ({
+      ...r,
+      display_ref: displayRef(r.case_id),
+      active: !workflowFinished(r.workflow_status),
+    })),
   };
 }

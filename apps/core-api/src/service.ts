@@ -4,6 +4,8 @@ import {
   ENABLED_CHANNELS,
   extractedReferralV2Schema,
   type AnyExtraction,
+  type AppointmentAction,
+  type AppointmentChange,
   type CaseAction,
   type Channel,
   type DocumentType,
@@ -17,6 +19,7 @@ import {
 } from "@access/contracts";
 import {
   AppError,
+  activeBookingForReferral,
   applyPendingObservations,
   assertVersion,
   caseExecutions,
@@ -38,6 +41,7 @@ import {
   recordInteraction,
   recordMilestone,
   recordObservation,
+  referralAccessStatus,
   replay,
   requestHash,
   resolveWorkItems,
@@ -64,6 +68,7 @@ import {
   type ReferralFacts,
   type RuleSetRef,
 } from "@access/rules";
+import { AppointmentOperations } from "./appointments.js";
 import type { AuthContext } from "./auth.js";
 import type { ExtractionPort, ExtractionOutcome } from "./extraction.js";
 import type { ArtifactScanner, ScanResult } from "./scanner.js";
@@ -136,6 +141,7 @@ function referralOnly(caseType: string, what: string) {
 }
 
 export class CaseService {
+  private appointments = new AppointmentOperations();
   constructor(private deps: ServiceDeps) {}
 
   private tx<T>(auth: AuthContext, fn: (c: DbClient) => Promise<T>) {
@@ -898,6 +904,11 @@ export class CaseService {
             state: caseRow.current_state,
             version: caseRow.version,
             execution_id: executionId,
+            // Answered from authoritative state only; nothing is generated.
+            access_status:
+              input.intent === "STATUS_ENQUIRY"
+                ? await referralAccessStatus(c, auth.tenantId, caseRow)
+                : null,
           };
         }),
       );
@@ -960,6 +971,7 @@ export class CaseService {
           version: out.caseRow.version,
           execution_id: out.executionId ?? null,
           observation_id: out.observationId ?? null,
+          appointment_case_id: out.appointmentCaseId ?? null,
         };
       }),
     );
@@ -982,6 +994,7 @@ export class CaseService {
     caseRow: CaseRow;
     executionId?: string | null;
     observationId?: string;
+    appointmentCaseId?: string;
   }> {
     const staffSeconds = action.staff_seconds;
     const cmd = action.command_id;
@@ -1164,6 +1177,7 @@ export class CaseService {
       case "record_follow_up": {
         if (!["READY_FOR_BOOKING", "WAITING"].includes(caseRow.current_state))
           throw this.notApplicable(action.action, caseRow.current_state);
+        await this.assertNoActiveBooking(c, ctx.tenantId, caseRow.id);
         const ruleSet = await this.pinnedRuleSet(c, ctx.tenantId, r);
         const due = action.follow_up_due_at
           ? new Date(action.follow_up_due_at)
@@ -1375,11 +1389,7 @@ export class CaseService {
         return { caseRow: row };
       }
       case "start_booking":
-        throw new AppError(
-          422,
-          "CASE_TYPE_DISABLED",
-          "appointment operations are not enabled",
-        );
+        return this.appointments.startBooking(c, ctx, caseRow, action);
     }
   }
 
@@ -1427,6 +1437,7 @@ export class CaseService {
         "EXECUTION_IN_FLIGHT",
         "an automated destination action is still in progress",
       );
+    await this.assertNoActiveBooking(c, ctx.tenantId, caseRow.id);
     const result = await recordObservation(c, ctx, caseRow, {
       type,
       occurredAt,
@@ -1450,6 +1461,22 @@ export class CaseService {
       commandId,
     });
     return { caseRow: result.caseRow, observationId: result.observationId };
+  }
+
+  /**
+   * While ACCESS is booking a referral, its outcome and follow-up are the
+   * booking's: staff cannot record a second booking (or close it) by hand.
+   */
+  private async assertNoActiveBooking(
+    c: DbClient,
+    tenantId: string,
+    caseId: string,
+  ) {
+    if (await activeBookingForReferral(c, tenantId, caseId))
+      throw conflict(
+        "BOOKING_IN_PROGRESS",
+        "a booking is in progress for this referral: finish or withdraw it first",
+      );
   }
 
   private async resolveException(
@@ -1579,6 +1606,75 @@ export class CaseService {
     });
     row = await applyPendingObservations(c, ctx, row);
     return { caseRow: row };
+  }
+
+  // -------------------------------------------------------------------------
+  // Appointment operations
+  // -------------------------------------------------------------------------
+
+  /** A step of the booking sub-flow on an appointment operations case. */
+  async performAppointmentAction(
+    auth: AuthContext,
+    caseId: string,
+    action: AppointmentAction,
+  ) {
+    authorize(auth.role, "appointment.book");
+    const envelope: CommandEnvelope = {
+      tenantId: auth.tenantId,
+      commandId: action.command_id,
+      type: "appointment.action",
+      requestHash: requestHash({
+        type: "appointment.action",
+        case_id: caseId,
+        ...action,
+        command_id: undefined,
+        correlation_id: undefined,
+      }),
+      actor: auth.actor,
+      caseId,
+      subject: { type: "case", id: caseId },
+    };
+    const ctx: Ctx = {
+      tenantId: auth.tenantId,
+      correlationId: action.correlation_id,
+      actor: auth.actor,
+    };
+    return this.tx(auth, (c) =>
+      executeCommand(c, envelope, () =>
+        this.appointments.act(c, ctx, auth.role, caseId, action),
+      ),
+    );
+  }
+
+  /** Confirm, reschedule or cancel a committed appointment. */
+  async changeAppointment(
+    auth: AuthContext,
+    appointmentId: string,
+    change: AppointmentChange,
+  ) {
+    const envelope: CommandEnvelope = {
+      tenantId: auth.tenantId,
+      commandId: change.command_id,
+      type: "appointment.change",
+      requestHash: requestHash({
+        type: "appointment.change",
+        appointment_id: appointmentId,
+        ...change,
+        command_id: undefined,
+        correlation_id: undefined,
+      }),
+      actor: auth.actor,
+    };
+    const ctx: Ctx = {
+      tenantId: auth.tenantId,
+      correlationId: change.correlation_id,
+      actor: auth.actor,
+    };
+    return this.tx(auth, (c) =>
+      executeCommand(c, envelope, () =>
+        this.appointments.change(c, ctx, auth.role, appointmentId, change),
+      ),
+    );
   }
 
   // -------------------------------------------------------------------------

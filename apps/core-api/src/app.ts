@@ -4,10 +4,14 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { ZodError, z } from "zod";
 import {
+  APPOINTMENT_ACTIONS,
+  APPOINTMENT_CHANGES,
   CASE_ACTIONS,
   CASE_TYPES,
   ENABLED_CASE_TYPES,
   QUEUE_FILTERS,
+  appointmentActionSchema,
+  appointmentChangeSchema,
   caseActionSchema,
   cohortQuerySchema,
   createCaseRequestSchema,
@@ -33,7 +37,7 @@ import { errorFields, log, Metrics } from "@access/observability";
 import { assertDirectlyCreatable, authorize } from "@access/policy";
 import { RuleValidationError } from "@access/rules";
 import type { AuthContext, Authenticator } from "./auth.js";
-import { caseDetail, queue } from "./queries.js";
+import { appointmentDetail, caseDetail, queue } from "./queries.js";
 import { CaseService } from "./service.js";
 
 export interface AppDeps {
@@ -214,6 +218,56 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       a,
       caseId,
       caseActionSchema.parse(req.body),
+    );
+  });
+  // Appointment operations: booking sub-flow steps on an APPOINTMENT_REQUEST,
+  // RESCHEDULING_REQUEST or CANCELLATION_REQUEST case.
+  app.post("/v1/cases/:caseId/appointment-actions", async (req) => {
+    const a = await auth(req);
+    // Coordinators and above; each case type then needs its own permission.
+    authorize(a.role, "appointment.book");
+    z.object({ action: z.enum(APPOINTMENT_ACTIONS) })
+      .passthrough()
+      .parse(req.body);
+    const caseId = uuid.parse((req.params as { caseId: string }).caseId);
+    return deps.service.performAppointmentAction(
+      a,
+      caseId,
+      appointmentActionSchema.parse(req.body),
+    );
+  });
+  app.get("/v1/appointments/:appointmentId", async (req) => {
+    const a = await auth(req);
+    authorize(a.role, "case.read");
+    const id = uuid.parse(
+      (req.params as { appointmentId: string }).appointmentId,
+    );
+    return deps.service.runInTenant(a, (c) =>
+      appointmentDetail(c, a.tenantId, id, a.role),
+    );
+  });
+  app.post("/v1/appointments/:appointmentId/actions", async (req) => {
+    const a = await auth(req);
+    // Authorise the named change before validating the rest of the body.
+    const named = z
+      .object({ action: z.enum(APPOINTMENT_CHANGES) })
+      .passthrough()
+      .parse(req.body);
+    authorize(
+      a.role,
+      named.action === "confirm"
+        ? "appointment.confirm"
+        : named.action === "reschedule"
+          ? "appointment.reschedule"
+          : "appointment.cancel",
+    );
+    const id = uuid.parse(
+      (req.params as { appointmentId: string }).appointmentId,
+    );
+    return deps.service.changeAppointment(
+      a,
+      id,
+      appointmentChangeSchema.parse(req.body),
     );
   });
   app.post("/v1/observations/import", async (req) => {
