@@ -683,6 +683,9 @@ export const caseActionSchema = z.discriminatedUnion("action", [
 ]);
 export type CaseAction = z.infer<typeof caseActionSchema>;
 export type CaseActionName = CaseAction["action"];
+export const CASE_ACTIONS = caseActionSchema.options.map(
+  (o) => o.shape.action.value,
+) as [CaseActionName, ...CaseActionName[]];
 
 /** Legacy v1 resolution endpoint, mapped onto case actions. */
 export const resolutionSchema = z

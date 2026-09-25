@@ -45,6 +45,15 @@ DROP TRIGGER IF EXISTS access_case_transitions_append_only ON access_case_transi
 CREATE TRIGGER access_case_transitions_append_only BEFORE UPDATE OR DELETE ON access_case_transitions
   FOR EACH ROW EXECUTE FUNCTION access_forbid_mutation();
 
+-- TRUNCATE bypasses row triggers; forbid it on every append-only table.
+DO $$ DECLARE t text; BEGIN
+  FOREACH t IN ARRAY ARRAY['evidence_events','commands','access_case_transitions','access_interactions',
+                           'access_case_observations','case_effort_events','access_audit_log'] LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I', t || '_no_truncate', t);
+    EXECUTE format('CREATE TRIGGER %I BEFORE TRUNCATE ON %I FOR EACH STATEMENT EXECUTE FUNCTION access_forbid_mutation()', t || '_no_truncate', t);
+  END LOOP;
+END $$;
+
 -- Row-level security. Memberships are readable by their own user (to resolve
 -- the tenant from a verified JWT) and by the tenant; only an ADMIN request
 -- context may write them. Rule sets are likewise ADMIN-write.

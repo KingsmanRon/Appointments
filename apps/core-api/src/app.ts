@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { ZodError, z } from "zod";
 import {
+  CASE_ACTIONS,
   CASE_TYPES,
   QUEUE_FILTERS,
   caseActionSchema,
@@ -118,6 +119,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // Referral intake (REFERRAL case type).
   app.post("/v1/referrals", async (req, reply) => {
     const a = await auth(req);
+    authorize(a.role, "referral.ingest");
     const input = ingestRequestSchema.parse(req.body);
     const result = await deps.service.ingestReferral(a, input);
     metrics.inc(
@@ -130,6 +132,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // Generic case creation: only enabled case types execute.
   app.post("/v1/cases", async (req, reply) => {
     const a = await auth(req);
+    authorize(a.role, "referral.ingest");
     const { case_type, ...rest } = createCaseRequestSchema.parse(req.body);
     assertCaseTypeEnabled(case_type);
     const input = ingestRequestSchema.parse(rest);
@@ -176,6 +179,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   app.post("/v1/cases/:caseId/interactions", async (req, reply) => {
     const a = await auth(req);
+    authorize(a.role, "case.interaction");
     const caseId = uuid.parse((req.params as { caseId: string }).caseId);
     const result = await deps.service.addInteraction(
       a,
@@ -186,6 +190,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   app.post("/v1/cases/:caseId/actions", async (req) => {
     const a = await auth(req);
+    // Authorise the named action before validating the rest of the body.
+    const named = z
+      .object({ action: z.enum(CASE_ACTIONS) })
+      .passthrough()
+      .parse(req.body);
+    authorize(a.role, `case.action.${named.action}`);
     const caseId = uuid.parse((req.params as { caseId: string }).caseId);
     return deps.service.performAction(
       a,
@@ -195,6 +205,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   app.post("/v1/observations/import", async (req) => {
     const a = await auth(req);
+    authorize(a.role, "observation.import");
     return deps.service.importObservations(
       a,
       observationImportSchema.parse(req.body),
@@ -468,12 +479,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
     // PostgreSQL integrity violations are conflicts, reported without detail.
     if (code === "23505" || code === "23514" || code === "23P01")
-      return r
-        .code(409)
-        .send({
-          error: "CONFLICT",
-          message: "request conflicts with current state",
-        });
+      return r.code(409).send({
+        error: "CONFLICT",
+        message: "request conflicts with current state",
+      });
     log("error", "request_failed", {
       route: req.routeOptions.url,
       ...errorFields(e),

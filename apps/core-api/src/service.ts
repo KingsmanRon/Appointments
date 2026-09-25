@@ -1137,6 +1137,8 @@ export class CaseService {
           resolution: "destination_reference_recorded",
           note: action.note,
           staffSeconds: undefined,
+          // The MANUAL_DESTINATION_ACTION effort above is the human touch.
+          automatic: true,
         });
         return this.enterReadyForBooking(c, ctx, caseRow, r, {
           source: "STAFF",
@@ -1168,6 +1170,7 @@ export class CaseService {
           resolution: "follow_up_recorded",
           note: action.note,
           staffSeconds: undefined,
+          automatic: true,
         });
         await evidence(c, ctx, caseRow, caseSubject(caseRow), {
           eventType: "follow_up_recorded",
@@ -1366,7 +1369,8 @@ export class CaseService {
         "OUTCOME_IN_FUTURE",
         "outcome time cannot be in the future",
       );
-    if (at.getTime() < new Date(caseRow.opened_at).getTime() - 60_000)
+    // Console inputs have minute precision; allow the same five-minute skew.
+    if (at.getTime() < new Date(caseRow.opened_at).getTime() - 5 * 60_000)
       throw new AppError(
         422,
         "OUTCOME_BEFORE_RECEIPT",

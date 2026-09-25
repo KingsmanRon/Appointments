@@ -273,9 +273,7 @@ export async function detail(
     throw new Error(`detail failed ${res.statusCode}: ${res.body}`);
   return res.json();
 }
-export async function caseState(
-  caseId: string,
-): Promise<{
+export async function caseState(caseId: string): Promise<{
   current_state: string;
   version: number;
   resolution_code: string | null;

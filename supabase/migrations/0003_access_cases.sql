@@ -137,11 +137,13 @@ ALTER TABLE referrals
   ADD COLUMN destination_committed_at timestamptz,
   ADD COLUMN outcome_next_poll_at timestamptz,
   ADD COLUMN follow_up_due_at timestamptz,
-  ADD COLUMN follow_up_count integer NOT NULL DEFAULT 0,
-  ADD CONSTRAINT referral_destination_reference_sourced CHECK ((destination_reference IS NULL) = (destination_reference_source IS NULL));
+  ADD COLUMN follow_up_count integer NOT NULL DEFAULT 0;
 UPDATE referrals SET destination_reference_source = 'CONNECTOR', destination_mode = 'CONNECTOR',
                      destination_committed_at = updated_at
  WHERE destination_reference IS NOT NULL;
+-- Added after the backfill so legacy committed referrals satisfy it.
+ALTER TABLE referrals ADD CONSTRAINT referral_destination_reference_sourced
+  CHECK ((destination_reference IS NULL) = (destination_reference_source IS NULL));
 -- Provider name is administrative, not patient data.
 UPDATE referrals SET referring_provider = extraction->'referrer'->>'name' WHERE extraction IS NOT NULL;
 UPDATE referrals SET completeness_status = CASE

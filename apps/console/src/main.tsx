@@ -1,145 +1,113 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
-type View = {
-  referral: {
-    id: string;
-    state: string;
-    version: number;
-    identity_status?: string;
-    external_id?: string;
+import { SessionProvider, useSession } from "./session";
+import { CaseDetail } from "./views/CaseDetail";
+import { Dashboard } from "./views/Dashboard";
+import { Login } from "./views/Login";
+import { NewReferral } from "./views/NewReferral";
+import { Queue } from "./views/Queue";
+import { Rules } from "./views/Rules";
+
+type Route =
+  | { page: "queue" | "dashboard" | "new" | "rules" }
+  | { page: "case"; id: string };
+function parse(hash: string): Route {
+  const [page, id] = hash.replace(/^#\/?/, "").split("/");
+  if (page === "case" && id) return { page: "case", id };
+  if (page === "dashboard" || page === "new" || page === "rules")
+    return { page };
+  return { page: "queue" };
+}
+
+function Shell() {
+  const session = useSession();
+  const [route, setRoute] = useState<Route>(() => parse(location.hash));
+  useEffect(() => {
+    const onHash = () => setRoute(parse(location.hash));
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const go = (hash: string) => {
+    location.hash = hash;
   };
-  events: Array<{
-    sequence: number;
-    event_type: string;
-    created_at: string;
-    correlation_id: string;
-  }>;
-  work_items: Array<{
-    id: string;
-    kind: string;
-    status: string;
-    reason: string;
-  }>;
-  executions: Array<{
-    id: string;
-    status: string;
-    attempts: number;
-    external_id?: string;
-    last_error?: string;
-  }>;
-};
-function App() {
-  const [tenant, setTenant] = useState("11111111-1111-4111-8111-111111111111");
-  const [id, setId] = useState("");
-  const [data, setData] = useState<View>();
-  const [error, setError] = useState("");
-  async function load() {
-    setError("");
-    const r = await fetch(
-      `${import.meta.env.VITE_CORE_API_URL ?? "http://localhost:3001"}/v1/referrals/${id}`,
-      { headers: { "x-tenant-id": tenant } },
-    );
-    if (!r.ok) {
-      setError(`Unable to load referral (${r.status})`);
-      return;
-    }
-    setData(await r.json());
-  }
+  const me = session.me;
   return (
     <main>
-      <header>
-        <p className="eyebrow">ACCESS · STAFF CONSOLE</p>
-        <h1>Referral operations</h1>
-        <p>Administrative workflow evidence and exception recovery.</p>
-      </header>
-      <section className="search">
-        <label>
-          Tenant ID
-          <input value={tenant} onChange={(e) => setTenant(e.target.value)} />
-        </label>
-        <label>
-          Referral ID
-          <input
-            value={id}
-            onChange={(e) => setId(e.target.value)}
-            placeholder="UUID"
-          />
-        </label>
-        <button onClick={load}>Open referral</button>
-      </section>
-      {error && <p role="alert">{error}</p>}
-      {data && (
-        <>
-          <section className="hero">
-            <div>
-              <span className={`badge ${data.referral.state.toLowerCase()}`}>
-                {data.referral.state}
-              </span>
-              <h2>{data.referral.id}</h2>
-              <p>
-                Version {data.referral.version} · Identity{" "}
-                {data.referral.identity_status ?? "pending"}
-              </p>
-            </div>
-            <strong>
-              {data.referral.external_id ?? "No external record yet"}
-            </strong>
-          </section>
-          <div className="grid">
-            <Panel title="Exceptions">
-              {data.work_items.length ? (
-                data.work_items.map((w) => (
-                  <article key={w.id}>
-                    <b>
-                      {w.kind} · {w.status}
-                    </b>
-                    <p>{w.reason}</p>
-                  </article>
-                ))
-              ) : (
-                <p>No exceptions.</p>
-              )}
-            </Panel>
-            <Panel title="Execution & reconciliation">
-              {data.executions.length ? (
-                data.executions.map((x) => (
-                  <article key={x.id}>
-                    <b>{x.status}</b>
-                    <p>{x.id}</p>
-                    <small>
-                      Attempts {x.attempts}{" "}
-                      {x.last_error && `· ${x.last_error}`}
-                    </small>
-                  </article>
-                ))
-              ) : (
-                <p>Action not dispatched.</p>
-              )}
-            </Panel>
+      <header className="app-header">
+        <div>
+          <p className="eyebrow">ACCESS · REFERRAL OPERATIONS</p>
+          <h1>Patient access console</h1>
+        </div>
+        {me && (
+          <div className="whoami">
+            <span
+              className={
+                me.data_mode === "REAL" ? "badge state-exception" : "badge"
+              }
+            >
+              {me.data_mode === "REAL" ? "Real patient data" : "Synthetic data"}
+            </span>
+            <small>
+              {me.role.replace(/_/g, " ").toLowerCase()} · {me.profile}
+            </small>
+            <button
+              className="secondary"
+              onClick={() => void session.signOut()}
+            >
+              Sign out
+            </button>
           </div>
-          <Panel title="Evidence chain">
-            {data.events.map((e) => (
-              <article className="event" key={e.sequence}>
-                <b>
-                  #{e.sequence} {e.event_type}
-                </b>
-                <time>{new Date(e.created_at).toLocaleString()}</time>
-                <small>Correlation {e.correlation_id}</small>
-              </article>
+        )}
+      </header>
+      {!me ? (
+        <Login />
+      ) : (
+        <>
+          <nav className="tabs">
+            {[
+              ["#/queue", "Queue"],
+              ["#/dashboard", "Dashboard"],
+              ...(me.role !== "READ_ONLY" ? [["#/new", "New referral"]] : []),
+              ["#/rules", "Rules"],
+            ].map(([hash, text]) => (
+              <a
+                key={hash}
+                href={hash}
+                className={
+                  location.hash.startsWith(hash!) ||
+                  (hash === "#/queue" && route.page === "queue")
+                    ? "active"
+                    : ""
+                }
+              >
+                {text}
+              </a>
             ))}
-          </Panel>
+          </nav>
+          {route.page === "queue" && (
+            <Queue open={(id) => go(`#/case/${id}`)} />
+          )}
+          {route.page === "case" && (
+            <CaseDetail
+              key={route.id}
+              caseId={route.id}
+              back={() => go("#/queue")}
+            />
+          )}
+          {route.page === "dashboard" && <Dashboard />}
+          {route.page === "new" && (
+            <NewReferral open={(id) => go(`#/case/${id}`)} />
+          )}
+          {route.page === "rules" && <Rules />}
         </>
       )}
     </main>
   );
 }
-function Panel(p: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="panel">
-      <h3>{p.title}</h3>
-      {p.children}
-    </section>
-  );
-}
-createRoot(document.getElementById("root")!).render(<App />);
+
+createRoot(document.getElementById("root")!).render(
+  <SessionProvider>
+    <Shell />
+  </SessionProvider>,
+);

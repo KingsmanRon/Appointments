@@ -25,7 +25,7 @@ const unknown = <T>(
 
 function seconds(from: Date | null, to: Date | null): number | null {
   if (!from || !to) return null;
-  return Math.max(0, Math.round((to.getTime() - from.getTime()) / 1000));
+  return Math.round((to.getTime() - from.getTime()) / 1000);
 }
 function duration(
   basis: string,
@@ -37,6 +37,12 @@ function duration(
     return unknown(basis, {
       start_known: Boolean(from.at),
       end_known: Boolean(to.at),
+    });
+  // An end recorded before its start is inconsistent data, not a duration:
+  // it is reported as unknown rather than clamped or averaged.
+  if (value < 0)
+    return unknown(`${basis} (end recorded before start)`, {
+      recorded_difference_seconds: value,
     });
   return {
     value,
@@ -291,9 +297,9 @@ export async function cohortMetrics(
         WHERE e.tenant_id=$1 AND e.source='STAFF' GROUP BY e.case_id),
      d AS (
        SELECT k.*, ms.verified_at, ms.destination_at,
-              extract(epoch FROM ms.verified_at - k.opened_at) AS s_verified,
-              extract(epoch FROM ms.destination_at - k.opened_at) AS s_ready,
-              CASE WHEN k.current_state='BOOKED' THEN extract(epoch FROM k.outcome_at - k.opened_at) END AS s_booked
+              CASE WHEN ms.verified_at >= k.opened_at THEN extract(epoch FROM ms.verified_at - k.opened_at) END AS s_verified,
+              CASE WHEN ms.destination_at >= k.opened_at THEN extract(epoch FROM ms.destination_at - k.opened_at) END AS s_ready,
+              CASE WHEN k.current_state='BOOKED' AND k.outcome_at >= k.opened_at THEN extract(epoch FROM k.outcome_at - k.opened_at) END AS s_booked
          FROM cohort k LEFT JOIN ms ON ms.case_id=k.id)
      SELECT count(*)::int AS received,
             count(verified_at)::int AS verified,
