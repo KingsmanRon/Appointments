@@ -8,11 +8,12 @@
     "build": "tsc -b && vite build"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.1",
     "@vitejs/plugin-react": "^5.0.2",
-    "vite": "^7.1.5",
-    "typescript": "^5.9.2",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
   },
   "devDependencies": {
     "@types/react": "^19.1.13",

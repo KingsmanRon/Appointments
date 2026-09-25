@@ -1,24 +1,75 @@
-import { pool, verifyRuntimeIdentity } from "@access/db";
-import { log } from "@access/observability";
+import {
+  ConfigError,
+  loadWorkerConfig,
+  type WorkerConfig,
+} from "@access/config";
+import { createPool, verifyRuntimeIdentity } from "@access/db";
+import { errorFields, log } from "@access/observability";
+import {
+  CapabilityGate,
+  FAULT_MODES,
+  MockConnector,
+  NoConnector,
+  type Connector,
+  type FaultMode,
+} from "./connector.js";
 import { Dispatcher } from "./dispatcher.js";
-import { MockConnector, type FaultMode } from "./connector.js";
-const dispatcher = new Dispatcher(
-  pool,
-  new MockConnector(
-    (process.env.CONNECTOR_FAULT_MODE ?? "success") as FaultMode,
-  ),
-);
-if (["staging", "production"].includes(process.env.NODE_ENV ?? ""))
+
+let config: WorkerConfig;
+try {
+  config = loadWorkerConfig();
+} catch (e) {
+  process.stderr.write(
+    `${e instanceof ConfigError ? e.message : "configuration failed"}\n`,
+  );
+  process.exit(78);
+}
+const pool = createPool({
+  connectionString: config.databaseUrl,
+  ssl: config.databaseSsl,
+  caCertPath: config.databaseCaCertPath,
+  applicationName: "access-worker",
+});
+if (config.profile !== "local")
   await verifyRuntimeIdentity(pool, "access_worker");
-const delay = Number(process.env.WORKER_POLL_MS ?? 250);
-log("info", "worker_started", { delay_ms: delay });
+const fault = config.connector.faultMode as FaultMode;
+if (!FAULT_MODES.includes(fault))
+  throw new Error("CONNECTOR_FAULT_MODE unknown");
+const connector: Connector =
+  config.connector.kind === "mock"
+    ? new MockConnector({
+        fault,
+        appointmentOutcome: (process.env.MOCK_APPOINTMENT_OUTCOME ??
+          "NONE") as never,
+      })
+    : new NoConnector();
+const gate = new CapabilityGate(connector, config.connector.capabilities);
+const dispatcher = new Dispatcher(pool, connector, gate, {
+  maxDispatch: config.dispatchMaxAttempts,
+  retrySeconds: config.dispatchRetrySeconds,
+  maxReconcile: config.reconcileMaxAttempts,
+  reconcileBaseSeconds: config.reconcileBaseSeconds,
+  tenantIds: config.tenantIds,
+});
+log("info", "worker_started", {
+  profile: config.profile,
+  data_mode: config.dataMode,
+  delay_ms: config.pollMs,
+  capability: gate.list().join(","),
+});
+let lastSweep = 0;
 for (;;) {
   try {
     const worked = await dispatcher.tick();
     await dispatcher.reconcile();
-    if (!worked) await new Promise((r) => setTimeout(r, delay));
+    await dispatcher.pollOutcomes();
+    if (Date.now() - lastSweep > 60_000) {
+      await dispatcher.sweepTimers();
+      lastSweep = Date.now();
+    }
+    if (!worked) await new Promise((r) => setTimeout(r, config.pollMs));
   } catch (e) {
-    log("error", "worker_tick_failed", { error: String(e) });
-    await new Promise((r) => setTimeout(r, delay));
+    log("error", "worker_tick_failed", errorFields(e));
+    await new Promise((r) => setTimeout(r, config.pollMs));
   }
 }
