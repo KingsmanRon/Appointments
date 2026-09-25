@@ -33,6 +33,7 @@ interface Common {
   secure: boolean;
   databaseSsl: "require" | undefined;
   databaseCaCertPath: string | undefined;
+  databaseCaCert: string | undefined;
 }
 function common(env: Env, problems: string[]): Common {
   const nodeEnv = env.NODE_ENV ?? "development";
@@ -64,6 +65,11 @@ function common(env: Env, problems: string[]): Common {
     problems.push(
       `${profile} requires DATABASE_SSL=require (TLS to PostgreSQL)`,
     );
+  if (
+    env.DATABASE_CA_CERT &&
+    !env.DATABASE_CA_CERT.includes("-----BEGIN CERTIFICATE-----")
+  )
+    problems.push("DATABASE_CA_CERT must be a PEM certificate");
   if (secure && env.ALLOW_SYNTHETIC_TENANT_CONTEXT === "true")
     problems.push(`${profile} refuses ALLOW_SYNTHETIC_TENANT_CONTEXT`);
   return {
@@ -73,6 +79,7 @@ function common(env: Env, problems: string[]): Common {
     secure,
     databaseSsl: env.DATABASE_SSL === "require" ? "require" : undefined,
     databaseCaCertPath: env.DATABASE_CA_CERT_PATH,
+    databaseCaCert: env.DATABASE_CA_CERT,
   };
 }
 

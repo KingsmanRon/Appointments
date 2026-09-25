@@ -30,6 +30,7 @@ const pool = createPool({
   connectionString: config.databaseUrl,
   ssl: config.databaseSsl,
   caCertPath: config.databaseCaCertPath,
+  caCert: config.databaseCaCert,
   applicationName: "access-api",
 });
 if (config.profile !== "local")

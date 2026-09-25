@@ -21,6 +21,8 @@ export interface PoolOptions {
   connectionString: string;
   ssl?: "require" | "disable" | undefined;
   caCertPath?: string | undefined;
+  /** PEM content (e.g. from a secret store) instead of a file path. */
+  caCert?: string | undefined;
   max?: number | undefined;
   applicationName?: string | undefined;
 }
@@ -33,9 +35,11 @@ export function createPool(options: PoolOptions): pg.Pool {
       options.ssl === "require"
         ? {
             rejectUnauthorized: true,
-            ...(options.caCertPath
-              ? { ca: readFileSync(options.caCertPath, "utf8") }
-              : {}),
+            ...(options.caCert
+              ? { ca: options.caCert }
+              : options.caCertPath
+                ? { ca: readFileSync(options.caCertPath, "utf8") }
+                : {}),
           }
         : undefined,
   });

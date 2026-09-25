@@ -10,6 +10,7 @@ const pool = createPool({
   connectionString: url,
   ssl: process.env.DATABASE_SSL === "require" ? "require" : undefined,
   caCertPath: process.env.DATABASE_CA_CERT_PATH,
+  caCert: process.env.DATABASE_CA_CERT,
 });
 await seedSynthetic(pool);
 console.log("synthetic fixtures seeded");

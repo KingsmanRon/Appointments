@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   ConfigError,
   loadApiConfig,
@@ -1164,8 +1164,7 @@ describe.runIf(databaseEnabled)("ACCESS v1.1 acceptance suite", () => {
       WORKER_DATABASE_URL:
         "postgres://access_worker:x@db.example.test/postgres",
       DATABASE_SSL: "require",
-      ARTIFACT_ENCRYPTION_KEY:
-        "3f7a9c21d4e85b60a1c2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f708192",
+      ARTIFACT_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
       ACCESS_AUTH_MODE: "synthetic",
       ARTIFACT_STORE: "local",
       ARTIFACT_SCANNER: "mock",

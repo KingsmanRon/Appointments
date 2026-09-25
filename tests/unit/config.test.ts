@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
@@ -5,7 +6,7 @@ import {
   loadWorkerConfig,
 } from "../../packages/config/src/index.js";
 
-const key = "3f7a9c21d4e85b60a1c2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f708192";
+const key = randomBytes(32).toString("hex");
 const pilotApi = {
   NODE_ENV: "production",
   ACCESS_DEPLOYMENT_PROFILE: "client-pilot",
@@ -22,7 +23,7 @@ const pilotApi = {
   ARTIFACT_STORE: "supabase",
   SUPABASE_URL: "https://project.supabase.co",
   SUPABASE_STORAGE_BUCKET: "access-artifacts",
-  SUPABASE_SERVICE_ROLE_KEY: "server-only-service-role",
+  SUPABASE_SERVICE_ROLE_KEY: "<service-role-placeholder>",
   ARTIFACT_SCANNER: "clamav",
   CLAMAV_HOST: "127.0.0.1",
 };
