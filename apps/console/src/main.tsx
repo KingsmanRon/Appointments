@@ -1,6 +1,18 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import "./style.css";
+import "@fontsource-variable/geist/wght.css";
+import "@fontsource-variable/geist-mono/wght.css";
+import "./styles/tokens.css";
+import "./styles/base.css";
+import "./styles/components.css";
+import "./styles/shell.css";
+import "./styles/login.css";
+import "./styles/queue.css";
+import "./styles/case.css";
+import "./styles/dashboard.css";
+import "./styles/intake.css";
+import "./styles/rules.css";
+import { Shell, type NavKey } from "./layout/Shell";
 import { SessionProvider, useSession } from "./session";
 import { CaseDetail } from "./views/CaseDetail";
 import { Dashboard } from "./views/Dashboard";
@@ -19,95 +31,74 @@ function parse(hash: string): Route {
     return { page };
   return { page: "queue" };
 }
+const TITLES: Record<Route["page"], string> = {
+  queue: "Queue",
+  dashboard: "Dashboard",
+  new: "New referral",
+  rules: "Rules",
+  case: "Case",
+};
 
-function Shell() {
+function App() {
   const session = useSession();
   const [route, setRoute] = useState<Route>(() => parse(location.hash));
+  const queueScroll = useRef(0);
+  const routed = useRef(false);
   useEffect(() => {
-    const onHash = () => setRoute(parse(location.hash));
+    const onHash = () =>
+      setRoute((previous) => {
+        if (previous.page === "queue") queueScroll.current = window.scrollY;
+        return parse(location.hash);
+      });
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+  // Each page starts at its top, except the queue, which returns to where the
+  // operator left it. Focus moves to the page so screen readers follow.
+  useLayoutEffect(() => {
+    if (!session.me) {
+      routed.current = false;
+      return;
+    }
+    document.title = `${TITLES[route.page]} · ACCESS`;
+    if (!routed.current) {
+      // Just signed in: start keyboard navigation in the page content.
+      routed.current = true;
+      document.getElementById("main")?.focus({ preventScroll: true });
+      return;
+    }
+    window.scrollTo(0, route.page === "queue" ? queueScroll.current : 0);
+    document.getElementById("main")?.focus({ preventScroll: true });
+  }, [route, session.me]);
   const go = (hash: string) => {
     location.hash = hash;
   };
-  const me = session.me;
+  if (!session.me) return <Login />;
+  const active: NavKey = route.page === "case" ? "queue" : route.page;
+  const key = route.page === "case" ? `case-${route.id}` : route.page;
   return (
-    <main>
-      <header className="app-header">
-        <div>
-          <p className="eyebrow">ACCESS · REFERRAL OPERATIONS</p>
-          <h1>Patient access console</h1>
-        </div>
-        {me && (
-          <div className="whoami">
-            <span
-              className={
-                me.data_mode === "REAL" ? "badge state-exception" : "badge"
-              }
-            >
-              {me.data_mode === "REAL" ? "Real patient data" : "Synthetic data"}
-            </span>
-            <small>
-              {me.role.replace(/_/g, " ").toLowerCase()} · {me.profile}
-            </small>
-            <button
-              className="secondary"
-              onClick={() => void session.signOut()}
-            >
-              Sign out
-            </button>
-          </div>
+    <Shell active={active}>
+      <div className="page" key={key}>
+        {route.page === "queue" && <Queue open={(id) => go(`#/case/${id}`)} />}
+        {route.page === "case" && (
+          <CaseDetail
+            key={route.id}
+            caseId={route.id}
+            back={() => go("#/queue")}
+          />
         )}
-      </header>
-      {!me ? (
-        <Login />
-      ) : (
-        <>
-          <nav className="tabs">
-            {[
-              ["#/queue", "Queue"],
-              ["#/dashboard", "Dashboard"],
-              ...(me.role !== "READ_ONLY" ? [["#/new", "New referral"]] : []),
-              ["#/rules", "Rules"],
-            ].map(([hash, text]) => (
-              <a
-                key={hash}
-                href={hash}
-                className={
-                  location.hash.startsWith(hash!) ||
-                  (hash === "#/queue" && route.page === "queue")
-                    ? "active"
-                    : ""
-                }
-              >
-                {text}
-              </a>
-            ))}
-          </nav>
-          {route.page === "queue" && (
-            <Queue open={(id) => go(`#/case/${id}`)} />
-          )}
-          {route.page === "case" && (
-            <CaseDetail
-              key={route.id}
-              caseId={route.id}
-              back={() => go("#/queue")}
-            />
-          )}
-          {route.page === "dashboard" && <Dashboard />}
-          {route.page === "new" && (
-            <NewReferral open={(id) => go(`#/case/${id}`)} />
-          )}
-          {route.page === "rules" && <Rules />}
-        </>
-      )}
-    </main>
+        {route.page === "dashboard" && <Dashboard />}
+        {route.page === "new" && (
+          <NewReferral open={(id) => go(`#/case/${id}`)} />
+        )}
+        {route.page === "rules" && <Rules />}
+      </div>
+    </Shell>
   );
 }
 
 createRoot(document.getElementById("root")!).render(
   <SessionProvider>
-    <Shell />
+    <App />
   </SessionProvider>,
 );
