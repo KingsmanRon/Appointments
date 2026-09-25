@@ -60,7 +60,7 @@ describe("appointment case lifecycle", () => {
 });
 
 describe("booking sub-flow", () => {
-  it("follows availability, selection, hold and commit", () => {
+  it("follows availability, selection, hold, commit and read-back", () => {
     const path = [
       "AVAILABILITY_REQUESTED",
       "AVAILABILITY_RETURNED",
@@ -68,6 +68,7 @@ describe("booking sub-flow", () => {
       "HOLD_REQUESTED",
       "HELD",
       "BOOKING_SUBMITTED",
+      "COMMITTED",
       "BOOKED",
     ] as const;
     for (let i = 1; i < path.length; i++)
@@ -75,6 +76,13 @@ describe("booking sub-flow", () => {
         path[i],
       );
     expect(workflowFinished("BOOKED")).toBe(true);
+    // Only a commit that was read back counts as booked.
+    expect(
+      canWorkflowStep("APPOINTMENT_REQUEST", "BOOKING_SUBMITTED", "BOOKED"),
+    ).toBe(false);
+    expect(
+      canWorkflowStep("APPOINTMENT_REQUEST", "COMMITTED", "WITHDRAWN"),
+    ).toBe(false);
   });
   it("a reschedule commits the replacement, then cancels the original", () => {
     expect(

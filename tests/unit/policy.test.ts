@@ -168,7 +168,7 @@ describe("case types and operations", () => {
     });
     for (const read of [
       "appointment.availability.read",
-      "appointment.reschedule.verify",
+      "appointment.verify",
       "appointment.hold.release",
     ])
       expect(

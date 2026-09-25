@@ -309,10 +309,14 @@ export const OPERATIONS = {
     caseTypes: ["RESCHEDULING_REQUEST"],
     consequential: true,
   },
-  /** Step 2: read B back from the destination before touching A. */
-  "appointment.reschedule.verify": {
+  /**
+   * Read a committed appointment back from the destination. Every booking
+   * and every reschedule's replacement B is verified before it counts; a
+   * reschedule touches A only after this succeeds for B.
+   */
+  "appointment.verify": {
     capability: "appointment.status.read",
-    caseTypes: ["RESCHEDULING_REQUEST"],
+    caseTypes: ["APPOINTMENT_REQUEST", "RESCHEDULING_REQUEST"],
     consequential: false,
   },
   /** Step 3: cancel the original appointment A, only after B is verified. */
@@ -572,7 +576,8 @@ export const APPOINTMENT_WORKFLOW_STATUSES = [
   "HOLD_REQUESTED",
   "HELD",
   "BOOKING_SUBMITTED",
-  // APPOINTMENT_REQUEST
+  // APPOINTMENT_REQUEST: committed at the destination, then read back.
+  "COMMITTED",
   "BOOKED",
   // RESCHEDULING_REQUEST: B committed, then verified, then A cancelled.
   "REPLACEMENT_BOOKED",
@@ -774,14 +779,17 @@ export const appointmentCommitSchema = z
   .strict();
 export type AppointmentCommit = z.infer<typeof appointmentCommitSchema>;
 
-/** Payload of appointment.reschedule.verify (enriched at dispatch). */
+/**
+ * Payload of appointment.verify as sent. The planned outbox row names only
+ * the committing execution; the worker fills in its appointment's reference.
+ */
 export const verifyRequestSchema = z
   .object({
     schema_version: z.literal("appointment-verify-request.v1"),
     appointment_reference: z.string().min(1).max(200),
   })
   .strict();
-/** SUCCEEDED.data of appointment.reschedule.verify. */
+/** SUCCEEDED.data of appointment.verify. */
 export const appointmentVerificationSchema = z
   .object({
     schema_version: z.literal("appointment-status.v1"),
@@ -1108,7 +1116,10 @@ export const cohortQuerySchema = z
 const appointmentActionBase = {
   command_id: uuid,
   correlation_id: uuid,
-  /** Version of the appointment operations case. */
+  /**
+   * Version of the appointment request (the booking sub-flow). Every step
+   * and every destination result increments it, so a stale view is refused.
+   */
   expected_version: z.number().int().nonnegative(),
   note: z.string().trim().min(1).max(1000).optional(),
   staff_seconds: z.number().int().positive().max(86_400).optional(),

@@ -345,12 +345,14 @@ const bookingFlow: Record<
   ],
   // Refusal: choose again. Confirmed not committed: resubmit or re-hold.
   BOOKING_SUBMITTED: [
-    "BOOKED",
+    "COMMITTED",
     "REPLACEMENT_BOOKED",
     "AVAILABILITY_RETURNED",
     "SLOT_SELECTED",
     "HELD",
   ],
+  // Committed at the destination; BOOKED only once it is read back there.
+  COMMITTED: ["BOOKED"],
   BOOKED: [],
   REPLACEMENT_BOOKED: ["ORIGINAL_CANCELLATION_PENDING"],
   ORIGINAL_CANCELLATION_PENDING: ["COMPLETED"],
@@ -370,6 +372,7 @@ const flowStatuses: Record<string, readonly AppointmentWorkflowStatus[]> = {
     "HOLD_REQUESTED",
     "HELD",
     "BOOKING_SUBMITTED",
+    "COMMITTED",
     "BOOKED",
     "WITHDRAWN",
   ],
@@ -486,6 +489,8 @@ export function appointmentNextAction(input: {
       return input.caseType === "RESCHEDULING_REQUEST"
         ? "Replacement submitted; awaiting destination confirmation (automated)"
         : "Booking submitted; awaiting destination confirmation (automated)";
+    case "COMMITTED":
+      return "Booking committed; verifying it with the destination (automated)";
     case "BOOKED":
       return input.confirmationStatus === "CONFIRMED"
         ? "None"

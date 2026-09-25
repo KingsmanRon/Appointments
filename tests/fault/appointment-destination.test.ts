@@ -346,7 +346,7 @@ describe("rescheduling and cancellation", () => {
     expect(replacement.status).toBe("SUCCEEDED");
     expect(
       await c.execute(
-        request("appointment.reschedule.verify", {
+        request("appointment.verify", {
           schema_version: "appointment-verify-request.v1",
           appointment_reference: replacement.external_id,
         }),

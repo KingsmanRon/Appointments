@@ -18,7 +18,8 @@ referral READY_FOR_BOOKING
   → staff select a slot
   → slot held (where the destination supports holds)
   → booking committed by the worker, exactly once
-  → appointment recorded, referral BOOKED
+  → appointment recorded, then read back from the destination
+  → only then: request and referral BOOKED
   → staff record the patient's confirmation
 ```
 
@@ -103,9 +104,9 @@ Booking sub-flow (`workflow_status`):
 APPOINTMENT_REQUEST / RESCHEDULING_REQUEST
 AVAILABILITY_REQUESTED ─> AVAILABILITY_RETURNED | NO_AVAILABILITY
 AVAILABILITY_RETURNED ─> SLOT_SELECTED ─> HOLD_REQUESTED ─> HELD
-SLOT_SELECTED | HELD ─> BOOKING_SUBMITTED ─> BOOKED               (appointment request)
+SLOT_SELECTED | HELD ─> BOOKING_SUBMITTED ─> COMMITTED ─> BOOKED   (appointment request: read back, then booked)
                                           └> REPLACEMENT_BOOKED     (reschedule: B committed)
-                                             ─> ORIGINAL_CANCELLATION_PENDING (B verified)
+                                             ─> ORIGINAL_CANCELLATION_PENDING (B read back)
                                              ─> COMPLETED           (A cancelled, superseded by B)
 refusals return to AVAILABILITY_RETURNED / SLOT_SELECTED with last_failure_code
 
@@ -135,7 +136,7 @@ Operations (`OPERATIONS`), each bound to the case types that may authorise it:
 | `appointment.hold.release`               | `appointment.hold`              | APPOINTMENT, RESCHEDULING | no            |
 | `appointment.create`                     | `appointment.create`            | APPOINTMENT_REQUEST       | yes           |
 | `appointment.reschedule` (commit B)      | `appointment.reschedule`        | RESCHEDULING_REQUEST      | yes           |
-| `appointment.reschedule.verify` (read B) | `appointment.status.read`       | RESCHEDULING_REQUEST      | no            |
+| `appointment.verify` (read a commit)     | `appointment.status.read`       | APPOINTMENT, RESCHEDULING | no            |
 | `appointment.reschedule.cancel_original` | `appointment.reschedule`        | RESCHEDULING_REQUEST      | yes           |
 | `appointment.cancel`                     | `appointment.cancel`            | CANCELLATION_REQUEST      | yes           |
 
@@ -180,9 +181,13 @@ connector metadata is stored.
    evaluated and recorded before the outbox row is written.
 3. One active booking request per referral (partial unique index) and one
    in-flight booking per request (`pending_execution_id`).
-4. The worker is the only writer of `appointments`. BOOKED requires a
-   `SUCCEEDED` result bound to the execution (`execution_id` echoed) with a
-   valid `appointment-commit.v1`, or a read-back that finds it.
+4. The worker is the only writer of `appointments`. An appointment is
+   recorded from a `SUCCEEDED` result bound to the execution (`execution_id`
+   echoed) with a valid `appointment-commit.v1`, or from a read-back that
+   finds it. The request is then `COMMITTED`, and becomes BOOKED (with the
+   referral) only after `appointment.verify` reads that appointment back as
+   BOOKED at the destination: only a verified foreign commit creates BOOKED.
+   The verify step is planned (BLOCKED) by the same staff command.
 5. A late or foreign result never mutates the workflow: settlement requires
    the execution to be the request's `pending_execution_id`.
 
@@ -192,7 +197,7 @@ The original appointment A is never touched until its replacement B is
 committed **and** read back:
 
 ```text
-commit reschedule (one staff command, one policy decision)
+commit reschedule (one staff command, one policy decision per step)
   outbox: [commit B: PENDING] → [verify B: BLOCKED] → [cancel A: BLOCKED]
   B committed (or found by read-back)  → verify B released
   B read back BOOKED                   → cancel A released

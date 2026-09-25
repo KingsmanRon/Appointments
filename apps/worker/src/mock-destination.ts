@@ -249,7 +249,7 @@ export class MockAppointmentDestination {
       case "appointment.create":
       case "appointment.reschedule":
         return this.book(request);
-      case "appointment.reschedule.verify":
+      case "appointment.verify":
         return this.verify(request);
       case "appointment.cancel":
       case "appointment.reschedule.cancel_original":

@@ -15,9 +15,11 @@ import {
   WORKER_ACTOR,
   appointmentByExecution,
   blockedStep,
+  bookAppointmentCase,
   cancelBlockedSteps,
   caseSubject,
   closeHold,
+  completeReschedule,
   evidence,
   findAppointment,
   findHold,
@@ -61,7 +63,7 @@ const WORKFLOW_OPERATIONS = new Set([
   "appointment.hold",
   "appointment.create",
   "appointment.reschedule",
-  "appointment.reschedule.verify",
+  "appointment.verify",
   "appointment.reschedule.cancel_original",
   "appointment.cancel",
 ]);
@@ -84,7 +86,7 @@ export function validAppointmentData(
     case "appointment.create":
     case "appointment.reschedule":
       return appointmentCommitSchema.safeParse(data).success;
-    case "appointment.reschedule.verify": {
+    case "appointment.verify": {
       const parsed = appointmentVerificationSchema.safeParse(data);
       return parsed.success && parsed.data.appointment_reference === asked;
     }
@@ -155,17 +157,21 @@ export class AppointmentSettlement {
       row.pending_execution_id !== item.execution_id
     )
       return { skip: "STALE_STEP" };
-    if (item.operation === "appointment.reschedule.verify") {
-      const replacement = row.appointment_id
+    if (item.operation === "appointment.verify") {
+      const committed = row.appointment_id
         ? await findAppointment(c, item.tenant_id, row.appointment_id)
         : undefined;
-      if (!replacement) return { skip: "REPLACEMENT_UNKNOWN" };
+      if (!committed) return { skip: "COMMITTED_APPOINTMENT_UNKNOWN" };
+      // The plan names the execution whose appointment is to be read back.
+      const planned = request.payload.commit_execution_id;
+      if (planned && planned !== committed.create_execution_id)
+        return { skip: "COMMITTED_APPOINTMENT_MISMATCH" };
       return {
         request: {
           ...request,
           payload: {
             schema_version: "appointment-verify-request.v1",
-            appointment_reference: replacement.external_reference,
+            appointment_reference: committed.external_reference,
           },
         },
       };
@@ -296,20 +302,35 @@ export class AppointmentSettlement {
         return;
       }
       case "appointment.create":
-        return this.booked(c, ctx, item, caseRow, row, data, via);
+        return this.committed(c, ctx, item, caseRow, row, data, via);
       case "appointment.reschedule":
         return this.replacementBooked(c, ctx, item, caseRow, row, data, via);
-      case "appointment.reschedule.verify": {
+      case "appointment.verify": {
         const verified = appointmentVerificationSchema.parse(data);
-        const replacement = await findAppointment(
+        const committed = await findAppointment(
           c,
           ctx.tenantId,
           row.appointment_id!,
         );
-        if (
+        const confirmed =
           verified.status === "BOOKED" &&
-          verified.appointment_reference === replacement?.external_reference
-        ) {
+          verified.appointment_reference === committed?.external_reference;
+        if (row.case_type === "APPOINTMENT_REQUEST") {
+          if (confirmed)
+            return this.verifiedBooking(c, ctx, item, caseRow, row, via);
+          // Committed, but the destination does not show it: a person checks.
+          row = await updateRequest(c, row, {
+            pending_execution_id: null,
+            last_failure_code: "BOOKING_UNVERIFIED",
+            last_failure_at: new Date(),
+          });
+          await this.raise(c, ctx, caseRow, row, {
+            kind: "CONNECTOR",
+            reason: `booking_not_verified:${verified.status.toLowerCase()}`,
+          });
+          return;
+        }
+        if (confirmed) {
           const cancel = await blockedStep(
             c,
             ctx.tenantId,
@@ -359,11 +380,15 @@ export class AppointmentSettlement {
     }
   }
 
-  private async booked(
+  /**
+   * The destination committed the booking: record the appointment (a foreign
+   * fact is never dropped) and read it back. BOOKED only after that.
+   */
+  private async committed(
     c: DbClient,
     ctx: Ctx,
     item: AppointmentItem,
-    caseRowIn: CaseRow,
+    caseRow: CaseRow,
     rowIn: AppointmentRequestRow,
     data: unknown,
     via: Via,
@@ -378,14 +403,19 @@ export class AppointmentSettlement {
       via,
       null,
     );
+    const verify = await blockedStep(
+      c,
+      ctx.tenantId,
+      rowIn.case_id,
+      "appointment.verify",
+    );
     const row = await updateRequest(c, rowIn, {
-      workflow_status: "BOOKED",
+      workflow_status: "COMMITTED",
       appointment_id: appointment.id,
-      pending_execution_id: null,
+      pending_execution_id: verify ?? null,
       last_failure_code: null,
       last_failure_at: null,
     });
-    const caseRow = await this.bookCase(c, ctx, caseRowIn, appointment.id, via);
     await evidence(c, ctx, caseRow, caseSubject(caseRow), {
       eventType: "appointment_committed",
       payload: {
@@ -397,11 +427,54 @@ export class AppointmentSettlement {
       },
     });
     if (commit.slot_reference !== rowIn.selected_slot_reference)
+      await this.slotDiffers(c, ctx, row, appointment.id);
+    log("info", "appointment_committed", {
+      case_id: row.case_id,
+      execution_id: item.execution_id,
+      code: via,
+    });
+    if (!verify || !(await releaseStep(c, ctx.tenantId, verify)))
       await this.raise(c, ctx, caseRow, row, {
         kind: "CONNECTOR",
-        reason: "committed_slot_differs_from_selection",
-        keepState: true,
+        reason: "booking_verification_not_planned",
       });
+  }
+
+  /** Read back and confirmed: the booking now counts, and so does the referral's. */
+  private async verifiedBooking(
+    c: DbClient,
+    ctx: Ctx,
+    item: AppointmentItem,
+    caseRowIn: CaseRow,
+    rowIn: AppointmentRequestRow,
+    via: Via,
+  ) {
+    const appointment = (await findAppointment(
+      c,
+      ctx.tenantId,
+      rowIn.appointment_id!,
+    ))!;
+    const row = await updateRequest(c, rowIn, {
+      workflow_status: "BOOKED",
+      pending_execution_id: null,
+      last_failure_code: null,
+      last_failure_at: null,
+    });
+    const caseRow = await bookAppointmentCase(
+      c,
+      ctx,
+      caseRowIn,
+      appointment.id,
+      via,
+    );
+    await evidence(c, ctx, caseRow, caseSubject(caseRow), {
+      eventType: "appointment_verified",
+      payload: {
+        execution_id: item.execution_id,
+        appointment_id: appointment.id,
+        via,
+      },
+    });
     // The referral this booking serves: the same observation engine as every
     // other outcome, so a referral in EXCEPTION or already resolved is never
     // moved by it.
@@ -413,7 +486,7 @@ export class AppointmentSettlement {
       );
       const observed = await recordObservation(c, ctx, referral, {
         type: "APPOINTMENT_BOOKED",
-        occurredAt: new Date(),
+        occurredAt: new Date(appointment.committed_at),
         sourceType: via,
         sourceReference: `appointment:${appointment.id}`,
         verificationLevel: "EXTERNAL_CONFIRMED",
@@ -432,10 +505,22 @@ export class AppointmentSettlement {
         },
       });
     }
-    log("info", "appointment_committed", {
-      case_id: row.case_id,
-      execution_id: item.execution_id,
-      code: via,
+  }
+
+  /** The destination committed another slot than the one chosen: say so. */
+  private async slotDiffers(
+    c: DbClient,
+    ctx: Ctx,
+    row: AppointmentRequestRow,
+    appointmentId: string,
+  ) {
+    const caseId = row.origin_referral_case_id ?? row.case_id;
+    const target = await lockCase(c, ctx.tenantId, caseId);
+    await openWorkItem(c, ctx, target, {
+      kind: "OUTCOME_REVIEW",
+      reason: "committed_slot_differs_from_selection",
+      ownerRole: "PRACTICE_MANAGER",
+      evidence: { appointment_id: appointmentId, request_case_id: row.case_id },
     });
   }
 
@@ -462,7 +547,7 @@ export class AppointmentSettlement {
       c,
       ctx.tenantId,
       rowIn.case_id,
-      "appointment.reschedule.verify",
+      "appointment.verify",
     );
     const row = await updateRequest(c, rowIn, {
       workflow_status: "REPLACEMENT_BOOKED",
@@ -516,91 +601,9 @@ export class AppointmentSettlement {
       last_failure_code: null,
       last_failure_at: null,
     });
-    await this.completeReschedule(c, ctx, caseRowIn, row, via, {
+    await completeReschedule(c, ctx, caseRowIn, row, via, {
       execution_id: item.execution_id,
     });
-  }
-
-  /** B committed and verified, A cancelled: one current appointment. */
-  async completeReschedule(
-    c: DbClient,
-    ctx: Ctx,
-    caseRowIn: CaseRow,
-    row: AppointmentRequestRow,
-    via: Via | "STAFF",
-    details: Record<string, unknown>,
-  ) {
-    let caseRow = caseRowIn;
-    if (caseRow.current_state === "EXCEPTION")
-      await resolveWorkItems(c, ctx, caseRow, {
-        kinds: ["CONNECTOR"],
-        resolution: "original_cancellation_confirmed",
-        note: null,
-        staffSeconds: undefined,
-        automatic: true,
-      });
-    caseRow = await this.bookCase(
-      c,
-      ctx,
-      caseRow,
-      row.appointment_id!,
-      via === "STAFF" ? "STAFF" : via,
-    );
-    await evidence(c, ctx, caseRow, caseSubject(caseRow), {
-      eventType: "original_superseded",
-      payload: {
-        ...details,
-        original_appointment_id: row.original_appointment_id,
-        replacement_appointment_id: row.appointment_id,
-        via,
-      },
-    });
-    const original = await findAppointment(
-      c,
-      ctx.tenantId,
-      row.original_appointment_id!,
-    );
-    if (original) {
-      const source = await lockCase(c, ctx.tenantId, original.source_case_id);
-      await evidence(c, ctx, source, caseSubject(source), {
-        eventType: "appointment_superseded",
-        payload: {
-          appointment_id: original.id,
-          superseded_by_id: row.appointment_id,
-          rescheduling_case_id: row.case_id,
-        },
-      });
-    }
-    if (row.origin_referral_case_id) {
-      const referral = await lockCase(
-        c,
-        ctx.tenantId,
-        row.origin_referral_case_id,
-      );
-      // Agrees with the referral's booked outcome: recorded, not reviewed.
-      const observed = await recordObservation(c, ctx, referral, {
-        type: "APPOINTMENT_BOOKED",
-        occurredAt: new Date(),
-        sourceType: via,
-        sourceReference: `appointment:${row.appointment_id}`,
-        verificationLevel:
-          via === "STAFF" ? "HUMAN_ATTESTED" : "EXTERNAL_CONFIRMED",
-        actorId: via === "STAFF" ? ctx.actor.id : null,
-        payload: {
-          appointment_id: row.appointment_id,
-          replaces_appointment_id: row.original_appointment_id,
-        },
-      });
-      await evidence(c, ctx, observed.caseRow, caseSubject(observed.caseRow), {
-        eventType: "appointment_rescheduled",
-        payload: {
-          from_appointment_id: row.original_appointment_id,
-          to_appointment_id: row.appointment_id,
-          rescheduling_case_id: row.case_id,
-        },
-      });
-    }
-    return caseRow;
   }
 
   private async cancelled(
@@ -770,33 +773,36 @@ export class AppointmentSettlement {
           });
           return;
         }
-        row = await updateRequest(c, row, {
-          workflow_status: (await this.usableHold(c, row))
-            ? "HELD"
-            : "SLOT_SELECTED",
-          pending_execution_id: null,
-          ...failure,
-        });
+        {
+          const held = await this.usableHold(c, row);
+          row = await updateRequest(c, row, {
+            workflow_status: held ? "HELD" : "SLOT_SELECTED",
+            current_hold_id: held ? row.current_hold_id : null,
+            pending_execution_id: null,
+            ...failure,
+          });
+        }
         await this.raise(c, ctx, caseRow, row, {
           kind: workKind,
           reason: `booking_refused:${code.toLowerCase()}`,
         });
         return;
       }
-      case "appointment.reschedule.verify":
+      case "appointment.verify":
+        // Unverified: nothing further runs; a reschedule leaves A untouched.
         await cancelBlockedSteps(
           c,
           ctx.tenantId,
           row.case_id,
-          "worker:replacement_unverified",
+          "worker:commit_unverified",
         );
         row = await updateRequest(c, row, {
           pending_execution_id: null,
           ...failure,
         });
         await this.raise(c, ctx, caseRow, row, {
-          kind: "CONNECTOR",
-          reason: `replacement_not_verified:${code.toLowerCase()}`,
+          kind: workKind,
+          reason: `${row.case_type === "RESCHEDULING_REQUEST" ? "replacement" : "booking"}_not_verified:${code.toLowerCase()}`,
         });
         return;
       case "appointment.reschedule.cancel_original":
@@ -897,6 +903,7 @@ export class AppointmentSettlement {
       case "appointment.hold":
         row = await updateRequest(c, row, {
           workflow_status: "SLOT_SELECTED",
+          current_hold_id: null,
           last_failure_code: "HOLD_NOT_COMMITTED",
           ...failure,
         });
@@ -909,13 +916,15 @@ export class AppointmentSettlement {
           row.case_id,
           "worker:booking_not_committed",
         );
-        row = await updateRequest(c, row, {
-          workflow_status: (await this.usableHold(c, row))
-            ? "HELD"
-            : "SLOT_SELECTED",
-          last_failure_code: "BOOKING_NOT_COMMITTED",
-          ...failure,
-        });
+        {
+          const held = await this.usableHold(c, row);
+          row = await updateRequest(c, row, {
+            workflow_status: held ? "HELD" : "SLOT_SELECTED",
+            current_hold_id: held ? row.current_hold_id : null,
+            last_failure_code: "BOOKING_NOT_COMMITTED",
+            ...failure,
+          });
+        }
         break;
       case "appointment.cancel":
         row = await updateRequest(c, row, {
@@ -1143,42 +1152,6 @@ export class AppointmentSettlement {
     if (row.current_hold_id)
       await closeHold(c, ctx.tenantId, row.current_hold_id, "CONSUMED");
     return appointment;
-  }
-
-  /** The request case records the booking fact and becomes BOOKED. */
-  private async bookCase(
-    c: DbClient,
-    ctx: Ctx,
-    caseRow: CaseRow,
-    appointmentId: string,
-    source: Via | "STAFF",
-  ): Promise<CaseRow> {
-    if (caseRow.current_state === "EXCEPTION")
-      await resolveWorkItems(c, ctx, caseRow, {
-        kinds: ["CONNECTOR"],
-        resolution: "outcome_confirmed",
-        note: null,
-        staffSeconds: undefined,
-        automatic: true,
-      });
-    const open = await c.query(
-      "SELECT 1 FROM work_items WHERE tenant_id=$1 AND case_id=$2 AND status='OPEN' AND kind IN ('SAFETY','FILE_SAFETY','MANUAL_DESTINATION','OUTCOME_REVIEW')",
-      [ctx.tenantId, caseRow.id],
-    );
-    const result = await recordObservation(c, ctx, caseRow, {
-      type: "APPOINTMENT_BOOKED",
-      occurredAt: new Date(),
-      sourceType: source,
-      sourceReference: `appointment:${appointmentId}`,
-      verificationLevel:
-        source === "STAFF" ? "HUMAN_ATTESTED" : "EXTERNAL_CONFIRMED",
-      actorId: source === "STAFF" ? ctx.actor.id : null,
-      payload: { appointment_id: appointmentId },
-      plan: open.rowCount
-        ? { disposition: "REVIEW", reason: "open_work_items" }
-        : { disposition: "APPLIED", to: "BOOKED", resolution: "BOOKED" },
-    });
-    return result.caseRow;
   }
 
   /** Back to a staff decision (READY_FOR_BOOKING) if an action was pending. */

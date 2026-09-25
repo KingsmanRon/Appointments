@@ -93,7 +93,7 @@ CREATE TABLE appointment_requests(
   timezone text NOT NULL CHECK (length(timezone) BETWEEN 1 AND 64),
   workflow_status text NOT NULL CHECK (workflow_status IN (
     'AVAILABILITY_REQUESTED','AVAILABILITY_RETURNED','NO_AVAILABILITY','SLOT_SELECTED','HOLD_REQUESTED','HELD',
-    'BOOKING_SUBMITTED','BOOKED','REPLACEMENT_BOOKED','ORIGINAL_CANCELLATION_PENDING','COMPLETED',
+    'BOOKING_SUBMITTED','COMMITTED','BOOKED','REPLACEMENT_BOOKED','ORIGINAL_CANCELLATION_PENDING','COMPLETED',
     'CANCELLATION_REQUESTED','CANCELLATION_SUBMITTED','CANCELLED','WITHDRAWN')),
   -- Latest availability snapshot returned by the destination (a read, not a
   -- reservation) and when it was observed.
@@ -120,7 +120,7 @@ CREATE TABLE appointment_requests(
     (case_type = 'APPOINTMENT_REQUEST' AND origin_referral_case_id IS NOT NULL AND original_appointment_id IS NULL
       AND cancellation_reason IS NULL
       AND workflow_status IN ('AVAILABILITY_REQUESTED','AVAILABILITY_RETURNED','NO_AVAILABILITY','SLOT_SELECTED',
-                              'HOLD_REQUESTED','HELD','BOOKING_SUBMITTED','BOOKED','WITHDRAWN'))
+                              'HOLD_REQUESTED','HELD','BOOKING_SUBMITTED','COMMITTED','BOOKED','WITHDRAWN'))
     OR (case_type = 'RESCHEDULING_REQUEST' AND original_appointment_id IS NOT NULL AND cancellation_reason IS NULL
       AND workflow_status IN ('AVAILABILITY_REQUESTED','AVAILABILITY_RETURNED','NO_AVAILABILITY','SLOT_SELECTED',
                               'HOLD_REQUESTED','HELD','BOOKING_SUBMITTED','REPLACEMENT_BOOKED',
@@ -132,7 +132,7 @@ CREATE TABLE appointment_requests(
     workflow_status NOT IN ('SLOT_SELECTED','HOLD_REQUESTED','HELD','BOOKING_SUBMITTED')
     OR (selected_slot_reference IS NOT NULL AND selected_slot IS NOT NULL)),
   CONSTRAINT appointment_request_committed CHECK (
-    workflow_status NOT IN ('BOOKED','REPLACEMENT_BOOKED','ORIGINAL_CANCELLATION_PENDING','COMPLETED')
+    workflow_status NOT IN ('COMMITTED','BOOKED','REPLACEMENT_BOOKED','ORIGINAL_CANCELLATION_PENDING','COMPLETED')
     OR appointment_id IS NOT NULL),
   CONSTRAINT appointment_request_availability_time CHECK ((availability IS NULL) = (availability_observed_at IS NULL))
 );

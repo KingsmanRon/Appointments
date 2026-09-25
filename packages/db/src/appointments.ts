@@ -10,7 +10,28 @@ import type {
   ConfirmationStatus,
   HoldStatus,
 } from "@access/contracts";
-import { workflowStep } from "@access/domain";
+import {
+  bookingEligibility,
+  patientAccessStatus,
+  workflowFinished,
+  workflowStep,
+  type AccessStatus,
+} from "@access/domain";
+import {
+  evaluateReferralRules,
+  unmetBookingPrerequisites,
+  type ReferralFacts,
+} from "@access/rules";
+import {
+  caseSubject,
+  evidence,
+  lockCase,
+  recordObservation,
+  resolveWorkItems,
+  type ActorRef,
+  type CaseRow,
+} from "./cases.js";
+import { loadApplicableRuleSet, loadRuleSet } from "./rules.js";
 import { conflict, notFound, type DbClient } from "./runtime.js";
 
 /**
@@ -517,4 +538,265 @@ export async function blockedStep(
     [tenantId, caseId, operation],
   );
   return row.rows[0]?.execution_id;
+}
+
+// ---------------------------------------------------------------------------
+// Shared by the API (staff commands) and the worker (settlement)
+// ---------------------------------------------------------------------------
+
+type Ctx = { tenantId: string; correlationId: string; actor: ActorRef };
+
+export interface BookingReadiness {
+  eligible: boolean;
+  /** Stable reason codes; never patient data. */
+  reasons: string[];
+  /** What the destination needs to book; null until the referral is there. */
+  context: BookingContext | null;
+  /** Follow-up interval of the pinned rule set, restored on withdrawal. */
+  readyForBookingHours: number;
+}
+/**
+ * May this referral start (or still commit) an automated booking? The same
+ * rule set that made it ready decides its booking prerequisites.
+ */
+export async function bookingReadiness(
+  c: DbClient,
+  tenantId: string,
+  referral: CaseRow,
+  options: { ignoreActiveRequest?: boolean } = {},
+): Promise<BookingReadiness> {
+  const found = await c.query<{
+    extraction: ReferralFacts["extraction"];
+    supplied_documents: ReferralFacts["supplied_documents"];
+    supplied_fields: ReferralFacts["supplied_fields"];
+    identity_confirmed_by: string | null;
+    rule_set_id: string | null;
+    destination_reference: string | null;
+  }>(
+    `SELECT extraction,supplied_documents,supplied_fields,identity_confirmed_by,rule_set_id,destination_reference
+       FROM referrals WHERE tenant_id=$1 AND case_id=$2`,
+    [tenantId, referral.id],
+  );
+  const r = found.rows[0];
+  if (!r || referral.case_type !== "REFERRAL")
+    return {
+      eligible: false,
+      reasons: ["NOT_A_REFERRAL"],
+      context: null,
+      readyForBookingHours: 48,
+    };
+  const ruleSet = r.rule_set_id
+    ? await loadRuleSet(c, tenantId, r.rule_set_id)
+    : await loadApplicableRuleSet(c, tenantId);
+  const facts: ReferralFacts = {
+    extraction: r.extraction,
+    supplied_documents: r.supplied_documents,
+    supplied_fields: r.supplied_fields,
+    identity_confirmed_by_staff: Boolean(r.identity_confirmed_by),
+  };
+  const open = await c.query<{ kind: string }>(
+    "SELECT kind FROM work_items WHERE tenant_id=$1 AND case_id=$2 AND status='OPEN'",
+    [tenantId, referral.id],
+  );
+  const active = options.ignoreActiveRequest
+    ? undefined
+    : await activeBookingForReferral(c, tenantId, referral.id);
+  const { eligible, reasons } = bookingEligibility({
+    caseType: referral.case_type,
+    state: referral.current_state,
+    openWorkKinds: open.rows.map((w) => w.kind),
+    unmetPrerequisites: ruleSet
+      ? unmetBookingPrerequisites(
+          ruleSet.definition,
+          facts,
+          r.destination_reference,
+        )
+      : ["rule_set"],
+    activeRequest: Boolean(active),
+  });
+  const decision = ruleSet ? evaluateReferralRules(ruleSet, facts) : null;
+  return {
+    eligible,
+    reasons,
+    context: r.destination_reference
+      ? {
+          destination_referral_reference: r.destination_reference,
+          // The destination already holds the patient behind its referral.
+          patient_reference: null,
+          service_code: decision?.service?.recognised
+            ? decision.service.code
+            : null,
+          destination_queue: decision?.routing?.destination_queue ?? null,
+        }
+      : null,
+    readyForBookingHours:
+      ruleSet?.definition.follow_up.ready_for_booking_hours ?? 48,
+  };
+}
+
+/**
+ * The appointment operations case records the booking fact and becomes
+ * BOOKED (or the fact is held for review while a person has work open).
+ */
+export async function bookAppointmentCase(
+  c: DbClient,
+  ctx: Ctx,
+  caseRow: CaseRow,
+  appointmentId: string,
+  source: "CONNECTOR" | "RECONCILIATION" | "STAFF",
+): Promise<CaseRow> {
+  if (caseRow.current_state === "EXCEPTION")
+    await resolveWorkItems(c, ctx, caseRow, {
+      kinds: ["CONNECTOR"],
+      resolution: "outcome_confirmed",
+      note: null,
+      staffSeconds: undefined,
+      automatic: true,
+    });
+  const open = await c.query(
+    "SELECT 1 FROM work_items WHERE tenant_id=$1 AND case_id=$2 AND status='OPEN' AND kind IN ('SAFETY','FILE_SAFETY','MANUAL_DESTINATION','OUTCOME_REVIEW')",
+    [ctx.tenantId, caseRow.id],
+  );
+  const result = await recordObservation(c, ctx, caseRow, {
+    type: "APPOINTMENT_BOOKED",
+    occurredAt: new Date(),
+    sourceType: source,
+    sourceReference: `appointment:${appointmentId}`,
+    verificationLevel:
+      source === "STAFF" ? "HUMAN_ATTESTED" : "EXTERNAL_CONFIRMED",
+    actorId: source === "STAFF" ? ctx.actor.id : null,
+    payload: { appointment_id: appointmentId },
+    plan: open.rowCount
+      ? { disposition: "REVIEW", reason: "open_work_items" }
+      : { disposition: "APPLIED", to: "BOOKED", resolution: "BOOKED" },
+  });
+  return result.caseRow;
+}
+
+/**
+ * Replacement committed and verified, original cancelled (read back by the
+ * worker or attested by a manager): one current appointment.
+ */
+export async function completeReschedule(
+  c: DbClient,
+  ctx: Ctx,
+  caseRowIn: CaseRow,
+  row: AppointmentRequestRow,
+  via: "CONNECTOR" | "RECONCILIATION" | "STAFF",
+  details: Record<string, unknown>,
+): Promise<CaseRow> {
+  let caseRow = caseRowIn;
+  if (caseRow.current_state === "EXCEPTION")
+    await resolveWorkItems(c, ctx, caseRow, {
+      kinds: ["CONNECTOR"],
+      resolution: "original_cancellation_confirmed",
+      note: null,
+      staffSeconds: undefined,
+      automatic: true,
+    });
+  caseRow = await bookAppointmentCase(
+    c,
+    ctx,
+    caseRow,
+    row.appointment_id!,
+    via,
+  );
+  await evidence(c, ctx, caseRow, caseSubject(caseRow), {
+    eventType: "original_superseded",
+    payload: {
+      ...details,
+      original_appointment_id: row.original_appointment_id,
+      replacement_appointment_id: row.appointment_id,
+      via,
+    },
+  });
+  const original = await findAppointment(
+    c,
+    ctx.tenantId,
+    row.original_appointment_id!,
+  );
+  if (original) {
+    const source = await lockCase(c, ctx.tenantId, original.source_case_id);
+    await evidence(c, ctx, source, caseSubject(source), {
+      eventType: "appointment_superseded",
+      payload: {
+        appointment_id: original.id,
+        superseded_by_id: row.appointment_id,
+        rescheduling_case_id: row.case_id,
+      },
+    });
+  }
+  if (row.origin_referral_case_id) {
+    const referral = await lockCase(
+      c,
+      ctx.tenantId,
+      row.origin_referral_case_id,
+    );
+    // Agrees with the referral's booked outcome: recorded, not reviewed.
+    const observed = await recordObservation(c, ctx, referral, {
+      type: "APPOINTMENT_BOOKED",
+      occurredAt: new Date(),
+      sourceType: via,
+      sourceReference: `appointment:${row.appointment_id}`,
+      verificationLevel:
+        via === "STAFF" ? "HUMAN_ATTESTED" : "EXTERNAL_CONFIRMED",
+      actorId: via === "STAFF" ? ctx.actor.id : null,
+      payload: {
+        appointment_id: row.appointment_id,
+        replaces_appointment_id: row.original_appointment_id,
+      },
+    });
+    await evidence(c, ctx, observed.caseRow, caseSubject(observed.caseRow), {
+      eventType: "appointment_rescheduled",
+      payload: {
+        from_appointment_id: row.original_appointment_id,
+        to_appointment_id: row.appointment_id,
+        rescheduling_case_id: row.case_id,
+      },
+    });
+  }
+  return caseRow;
+}
+
+/**
+ * "What is happening with this referral?" from authoritative state: the
+ * referral, its active appointment operations request, its appointments.
+ */
+export async function referralAccessStatus(
+  c: DbClient,
+  tenantId: string,
+  referral: Pick<CaseRow, "id" | "current_state" | "resolution_code">,
+): Promise<{ status: AccessStatus; label: string }> {
+  const requests = await requestsForReferral(c, tenantId, referral.id);
+  const active = requests.find((r) => !workflowFinished(r.workflow_status));
+  const activeCase = active
+    ? (
+        await c.query<{ current_state: CaseRow["current_state"] }>(
+          "SELECT current_state FROM access_cases WHERE tenant_id=$1 AND id=$2",
+          [tenantId, active.case_id],
+        )
+      ).rows[0]
+    : undefined;
+  const open = await c.query<{ kind: string }>(
+    "SELECT kind FROM work_items WHERE tenant_id=$1 AND case_id=$2 AND status='OPEN'",
+    [tenantId, referral.id],
+  );
+  const appointments = await appointmentsForReferral(c, tenantId, referral.id);
+  return patientAccessStatus({
+    referralState: referral.current_state,
+    referralResolution: referral.resolution_code,
+    openWorkKinds: open.rows.map((w) => w.kind),
+    activeRequest:
+      active && activeCase
+        ? {
+            caseType: active.case_type,
+            state: activeCase.current_state,
+            workflowStatus: active.workflow_status,
+          }
+        : null,
+    appointments: appointments.map((a) => ({
+      status: a.status,
+      confirmationStatus: a.confirmation_status,
+    })),
+  });
 }
