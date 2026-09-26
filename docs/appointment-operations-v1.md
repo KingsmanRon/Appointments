@@ -240,7 +240,13 @@ reads the destination back by the original `execution_id` (capability
   same execution is re-armed automatically, because the effect is known absent;
 - stays inconclusive → bounded backoff, then EXCEPTION and a CONNECTOR work
   item; staff may `recheck` (re-arm the read-back) or, having checked the
-  destination, `attest_not_committed`.
+  destination, `attest_not_committed` (the execution is superseded, never
+  re-sent; the step returns to staff with `ATTESTED_NOT_COMMITTED`).
+
+A commit that the destination reports but then does not show on read-back
+(`booking_not_verified`, `replacement_not_verified`) stays an exception; staff
+may `recheck`, which plans a fresh read-back (a read, never a re-send). For a
+reschedule, A is never touched while B is unverified.
 
 Staff language: "Booking submitted. The destination system has not yet
 confirmed whether it was committed. ACCESS is checking before attempting
@@ -313,7 +319,58 @@ scoped token naming one referral) that maps onto the same command handlers,
 policy and outbox; it never sees other patients, other tenants or connector
 credentials. It is not built in v1; the channel stays disabled.
 
-## 16. What remains disabled
+## 16. Console
+
+The existing console gains the Booking stage; there is no separate
+appointments app. A referral that may start booking shows Start booking (or
+why it may not); an appointment request shows Availability → Select → Hold →
+Commit → Confirm (reschedule: new booking, check, cancel original;
+cancellation: requested, submitted, cancelled) with plain-language status,
+the slots grouped by local day (not reserved until held or booked; stale
+after 10 minutes), a hold countdown, a confirmation step before every
+consequential command, and recovery (check again, attest absent, attest the
+original cancelled) when the destination could not confirm. The page follows
+the worker while a step runs. The queue adds Booking in progress, Reschedule
+and Cancellation lenses and says what kind of work each row is; the
+dashboard adds a Booking chapter. Staff never see execution states, codes or
+connector names.
+
+## 17. Qualification
+
+Synthetic-staging qualified, against the synthetic destination only:
+scenarios A–S of the v1 brief (`tests/e2e/appointments.test.ts`, see
+[qualification](qualification.md#appointment-operations-qualification)), the
+appointment security suite, unit and fault tests of the sub-flow and the
+simulator, the 0006 upgrade test over existing referral cases, and a Chromium
+check of the console. **Real PMS integration is not included** and nothing
+here is production-ready for real patients.
+
+## 18. Known limitations
+
+- The synthetic destination lives in the worker's memory: restarting the
+  worker forgets its appointments and holds (a real destination persists).
+- The console offers Start booking to every eligible referral; the API does
+  not know which capabilities the worker enables. With `CONNECTOR_KIND=none`
+  (or capabilities removed) the first step fails closed into a staff
+  exception and booking stays manual.
+- A destination that confirms a commit and later cannot find it is left as
+  an exception for manual reconciliation with the destination.
+- One active booking per referral; after a cancellation, booking again needs
+  a new referral in v1 (the cancellation is raised as an outcome review).
+- Hold expiry is swept every few seconds; the destination's expiry is
+  authoritative and the API refuses a hold with 15 s or less left.
+- No messages are sent: confirmations are staff attestations.
+
+## 19. Deployment and configuration
+
+Run migration `0006` before deploying the new API and worker; no new
+variable, secret, service, database or provider. `CONNECTOR_CAPABILITIES`
+empty means all implemented capabilities; if set, include the appointment
+capabilities to be used (`appointment.status.read` is required, because a
+booking counts only once read back). Data mode stays SYNTHETIC; the mock
+connector refuses REAL data.
+
+## 20. What remains disabled
 
 - `STATUS_ENQUIRY` and `MISSING_INFORMATION` as independent case types
   (they remain interactions on a referral).
