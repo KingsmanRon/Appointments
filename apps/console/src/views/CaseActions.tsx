@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { api, fileToBase64, newIds } from "../api";
 import { Icon } from "../components/Icon";
-import { label, RESOLUTION_LABELS, when } from "../format";
+import { label, RESOLUTION_LABELS, sourceLabel, when } from "../format";
 import { useSession } from "../session";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the case view renders an API document */
@@ -552,7 +552,7 @@ export function Actions({ view, onDone }: { view: View; onDone: () => void }) {
                 </option>
                 {reviewObservations.map((o: any) => (
                   <option key={o.id} value={o.id}>
-                    {label(o.observation_type)} · {label(o.source_type)} ·{" "}
+                    {label(o.observation_type)} · {sourceLabel(o.source_type)} ·{" "}
                     {when(o.occurred_at)}
                   </option>
                 ))}

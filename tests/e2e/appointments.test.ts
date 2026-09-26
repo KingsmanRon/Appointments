@@ -294,6 +294,8 @@ describe.runIf(databaseEnabled)("appointment operations qualification", () => {
     const v = await view(o.coordinator, caseId);
     expect(v.case.current_state).toBe("BOOKED");
     expect(v.appointment_request.workflow_status).toBe("BOOKED");
+    // The booking consumed the hold, and the view still shows it was used.
+    expect(v.appointment_request.hold.status).toBe("CONSUMED");
     expect(v.appointments).toHaveLength(1);
     const appointment = v.appointments[0];
     expect(appointment).toMatchObject({
@@ -499,6 +501,8 @@ describe.runIf(databaseEnabled)("appointment operations qualification", () => {
     await drain(worker(o, connector));
     const v = await view(o.coordinator, caseId);
     expect(v.case.current_state).toBe("BOOKED");
+    // Booked straight from the selection: no hold was taken.
+    expect(v.appointment_request.hold).toBeNull();
     expect(
       v.executions.filter(
         (e: { operation: string }) => e.operation === "appointment.create",

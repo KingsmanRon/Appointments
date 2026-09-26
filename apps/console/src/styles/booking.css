@@ -37,6 +37,10 @@
   padding-top: var(--s-4);
   border-top: 1px solid var(--c-line);
 }
+/* No divider when no secondary action applies (while ACCESS is checking). */
+.booking__secondary:empty {
+  display: none;
+}
 .booking__secondary .search-again,
 .booking__secondary .withdraw,
 .booking__secondary .booking__row {
@@ -112,6 +116,7 @@
   color: var(--c-ink-3);
   font-size: var(--t-xs);
 }
+.booking-steps .is-passed::before,
 .booking-steps .is-done::before {
   background: var(--c-brand-mid);
 }

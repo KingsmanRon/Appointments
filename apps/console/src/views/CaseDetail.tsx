@@ -11,6 +11,7 @@ import {
   reasonLabel,
   RESOLUTION_LABELS,
   roleLabel,
+  sourceLabel,
   STATE_LABELS,
   stamp,
   when,
@@ -40,7 +41,7 @@ const REQUEST_SITUATION: Record<string, string> = {
   APPOINTMENT_REQUEST:
     "Booking an appointment for a referral. Each step is sent to the destination system by ACCESS.",
   RESCHEDULING_REQUEST:
-    "Moving a booked appointment. The new one is booked and confirmed before the original is cancelled.",
+    "Moving a booked appointment. The new one is booked and checked in the destination system before the original is cancelled.",
   CANCELLATION_REQUEST:
     "Cancelling a booked appointment in the destination system.",
 };
@@ -461,11 +462,17 @@ export function CaseDetail({
   );
 }
 
+const FINISHED_FLOWS = ["BOOKED", "COMPLETED", "CANCELLED", "WITHDRAWN"];
 function outcomeSentence(view: CaseView): string {
   const c = view.case;
   if (!c.resolution_code)
     return STATE_LABELS[c.current_state] ?? c.current_state;
-  return `${RESOLUTION_LABELS[c.resolution_code] ?? label(c.resolution_code)}${
+  // A finished appointment request says what happened to the appointment
+  // ("Rescheduled"), not only how the case resolved ("Booked").
+  const flow = view.appointment_request?.workflow_status;
+  const done =
+    flow && FINISHED_FLOWS.includes(flow) ? WORKFLOW_LABELS[flow] : undefined;
+  return `${done ?? RESOLUTION_LABELS[c.resolution_code] ?? label(c.resolution_code)}${
     c.outcome_at ? `, ${stamp(c.outcome_at)}` : ""
   }`;
 }
@@ -671,8 +678,8 @@ function Outcome({ view }: { view: CaseView }) {
             <>
               <strong>{RESOLUTION_LABELS[c.resolution_code]}</strong>{" "}
               <span className="muted">
-                ({label(c.resolution_source ?? "unknown")}, {when(c.outcome_at)}
-                )
+                ({sourceLabel(c.resolution_source ?? "unknown")},{" "}
+                {when(c.outcome_at)})
               </span>
             </>
           ) : (
@@ -746,10 +753,6 @@ function actorLabel(id: string): string {
   if (id === "access-worker") return "ACCESS";
   return id;
 }
-const SOURCE_WORDS: Record<string, string> = {
-  CONNECTOR: "Destination system",
-  RECONCILIATION: "Destination system (read back)",
-};
 function Timeline({ view }: { view: CaseView }) {
   const entries = [
     ...view.interactions.map((i) => ({
@@ -760,7 +763,7 @@ function Timeline({ view }: { view: CaseView }) {
     ...view.observations.map((o) => ({
       at: o.occurred_at,
       kind: "Observation",
-      text: `${label(o.observation_type)} · ${SOURCE_WORDS[o.source_type] ?? label(o.source_type)} · ${o.verification_level.replace("_", "-").toLowerCase()} · ${o.disposition.toLowerCase()}${o.disposition_reason ? ` (${label(o.disposition_reason)})` : ""}`,
+      text: `${label(o.observation_type)} · ${sourceLabel(o.source_type)} · ${o.verification_level.replace("_", "-").toLowerCase()} · ${o.disposition.toLowerCase()}${o.disposition_reason ? ` (${label(o.disposition_reason)})` : ""}`,
     })),
     ...view.transitions.map((t) => ({
       at: t.occurred_at,

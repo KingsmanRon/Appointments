@@ -35,6 +35,14 @@ export const WORK_KIND_LABELS: Record<string, string> = {
 export function kindLabel(kind: string): string {
   return WORK_KIND_LABELS[kind] ?? label(kind);
 }
+/** Who reported a fact, in staff words (no connector vocabulary). */
+const SOURCE_LABELS: Record<string, string> = {
+  CONNECTOR: "Destination system",
+  RECONCILIATION: "Destination system (read back)",
+};
+export function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source] ?? label(source);
+}
 /** What kind of work a case is, in the words staff use. */
 export const CASE_TYPE_LABELS: Record<string, string> = {
   REFERRAL: "Referral",

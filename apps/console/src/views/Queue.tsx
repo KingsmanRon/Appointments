@@ -239,12 +239,12 @@ export function Queue({ open }: { open: (caseId: string) => void }) {
               <li key={s[0]}>{lens(s, " lens--station")}</li>
             ))}
           </ol>
-          <span className="lens-group" role="presentation">
+          <span className="lens-more">
             {CHANGES.map((o) => lens(o))}
+            {OTHER.map((o) =>
+              lens(o, o[0] === "exceptions" ? " lens--exception" : ""),
+            )}
           </span>
-          {OTHER.map((o) =>
-            lens(o, o[0] === "exceptions" ? " lens--exception" : ""),
-          )}
         </div>
       </div>
 

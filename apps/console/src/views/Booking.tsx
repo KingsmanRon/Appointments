@@ -240,27 +240,35 @@ function BookingSteps({
     req.case_type === "APPOINTMENT_REQUEST" && w === "BOOKED" && confirmed
       ? names.length
       : order[w]!;
+  // The hold is optional: once past it, it counts as done only if a hold
+  // was actually taken (a booking consumes it).
+  const held = req.hold?.status === "ACTIVE" || req.hold?.status === "CONSUMED";
   return (
     <ol className="booking-steps" aria-label="Booking steps">
       {names.map((name, i) => {
+        const passed = w !== "WITHDRAWN" && i < at;
         const status =
           w === "WITHDRAWN"
             ? "skipped"
-            : i < at
-              ? "done"
+            : passed
+              ? name === "Hold" && !held
+                ? "skipped"
+                : "done"
               : i === at
                 ? "current"
                 : "ahead";
         return (
           <li
             key={name}
-            className={`booking-steps__step is-${status}`}
+            className={`booking-steps__step is-${status}${passed ? " is-passed" : ""}`}
             aria-current={status === "current" ? "step" : undefined}
           >
             <span className="booking-steps__node" aria-hidden />
             <span className="booking-steps__name">{name}</span>
             {name === "Hold" && status !== "done" && (
-              <span className="booking-steps__note">Optional</span>
+              <span className="booking-steps__note">
+                {passed ? "Not used" : "Optional"}
+              </span>
             )}
           </li>
         );
@@ -277,9 +285,9 @@ const RUNNING: Record<string, string> = {
   "appointment.verify":
     "Checking with the destination system that the appointment is there.",
   "appointment.reschedule":
-    "Booking the new appointment. The original is not touched until the new one is confirmed.",
+    "Booking the new appointment. The original is not touched until the new one is checked in the destination system.",
   "appointment.reschedule.cancel_original":
-    "The new appointment is confirmed. Cancelling the original.",
+    "The new appointment is in the destination system. Cancelling the original.",
   "appointment.cancel": "Sending the cancellation to the destination system.",
 };
 const WHAT: Record<string, string> = {
@@ -619,7 +627,7 @@ function Selected({
         )}
         <Commit
           label={reschedule ? "Book as the new appointment" : "Book this slot"}
-          question={`${reschedule ? "Book the new appointment for" : "Book"} ${slotTime(s.start_at, s.timezone)}${place ? ` with ${place}` : ""}? ${reschedule ? "The original is cancelled only after the new one is confirmed." : "This creates the appointment in the destination system."}`}
+          question={`${reschedule ? "Book the new appointment for" : "Book"} ${slotTime(s.start_at, s.timezone)}${place ? ` with ${place}` : ""}? ${reschedule ? "The original is cancelled only after the new one is checked in the destination system." : "This creates the appointment in the destination system."}`}
           confirm={reschedule ? "Confirm new booking" : "Confirm booking"}
           busy={busy === "commit"}
           disabled={
