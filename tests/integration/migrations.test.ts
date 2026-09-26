@@ -53,7 +53,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
     const pool = await scratchDatabase();
     try {
       const first = await migrate(pool);
-      expect(first.applied).toHaveLength(5);
+      expect(first.applied).toHaveLength(6);
       const second = await migrate(pool);
       expect(second).toEqual({
         applied: [],
@@ -74,7 +74,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
     const pool = await scratchDatabase();
     try {
       const [a, b] = await Promise.all([migrate(pool), migrate(pool)]);
-      expect([...a.applied, ...b.applied].sort()).toHaveLength(5);
+      expect([...a.applied, ...b.applied].sort()).toHaveLength(6);
     } finally {
       await pool.end();
     }
@@ -175,6 +175,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
         "0003_access_cases",
         "0004_interactions_outcomes_rules",
         "0005_workforce_identity_and_privileges",
+        "0006_appointment_operations",
       ]);
     } finally {
       await pool.end();
@@ -284,7 +285,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
       );
 
       const result = await migrate(pool);
-      expect(result.applied).toHaveLength(3);
+      expect(result.applied).toHaveLength(4);
       const cases = await pool.query(
         "SELECT id,current_state,version,legacy_referral_state,resolution_code FROM access_cases WHERE tenant_id=$1",
         [tenant],
@@ -397,6 +398,170 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
       expect(
         observations.rows.every((o) => o.verification_level === "DERIVED"),
       ).toBe(true);
+      expect((await migrate(pool)).applied).toEqual([]);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("0006 upgrades a database holding referral cases without rewriting anything", async () => {
+    const pool = await scratchDatabase();
+    try {
+      await migrate(pool, {
+        until: "0005_workforce_identity_and_privileges",
+      });
+      const tenant = randomUUID();
+      await pool.query(
+        "INSERT INTO organisations(id,name) VALUES($1,'Referral org')",
+        [tenant],
+      );
+      // Referral cases as v1.1 leaves them: open, booked and closed.
+      const cases: Record<string, string> = {};
+      const states: [string, string | null][] = [
+        ["RECEIVED", null],
+        ["INFORMATION_MISSING", null],
+        ["READY_FOR_BOOKING", null],
+        ["WAITING", null],
+        ["EXCEPTION", null],
+        ["BOOKED", "BOOKED"],
+        ["CLOSED", "PATIENT_DECLINED"],
+      ];
+      for (const [state, code] of states) {
+        const id = randomUUID();
+        cases[state] = id;
+        await pool.query(
+          `INSERT INTO access_cases(id,tenant_id,case_type,source_channel,current_state,current_owner,exception_reason,opened_at,
+                                    resolved_at,outcome_at,resolution_code,resolution_source,resolution_actor_id,version)
+           VALUES($1,$2,'REFERRAL','STAFF_UPLOAD',$3,$4,$5,now()-interval '2 days',$6,$6,$7,$8,$9,4)`,
+          [
+            id,
+            tenant,
+            state,
+            code ? null : "REFERRAL_COORDINATOR",
+            state === "EXCEPTION" ? "connector" : null,
+            code ? new Date() : null,
+            code,
+            code ? "STAFF" : null,
+            code ? "synthetic:coordinator" : null,
+          ],
+        );
+        await pool.query(
+          "INSERT INTO referrals(id,tenant_id,case_id,destination_reference,destination_reference_source) VALUES($1,$2,$3,$4,$5)",
+          [
+            randomUUID(),
+            tenant,
+            id,
+            code || state === "READY_FOR_BOOKING" ? `PMS-${state}` : null,
+            code || state === "READY_FOR_BOOKING" ? "MANUAL" : null,
+          ],
+        );
+        const c = await pool.connect();
+        try {
+          await c.query("BEGIN");
+          for (let v = 1; v <= 3; v++)
+            await appendEvidence(c, {
+              tenantId: tenant,
+              caseId: id,
+              subject: { type: "case", id },
+              aggregateVersion: v,
+              eventType: `v11_event_${v}`,
+              payload: { step: v },
+              correlationId: id,
+              actor: { type: "SYSTEM", id: "test" },
+            });
+          await c.query("COMMIT");
+        } finally {
+          c.release();
+        }
+      }
+      const execution = randomUUID();
+      await pool.query(
+        "INSERT INTO executions(id,tenant_id,case_id,subject_type,subject_id,operation,status,attempts,external_id) VALUES($1,$2,$3,'case',$3,'referral.create','SUCCEEDED',1,'PMS-X')",
+        [execution, tenant, cases.READY_FOR_BOOKING],
+      );
+      await pool.query(
+        "INSERT INTO outbox(tenant_id,case_id,subject_type,subject_id,operation,aggregate_version,execution_id,payload,correlation_id,status) VALUES($1,$2,'case',$2,'referral.create',1,$3,'{}',$2,'DONE')",
+        [tenant, cases.READY_FOR_BOOKING, execution],
+      );
+      await pool.query(
+        "INSERT INTO work_items(tenant_id,case_id,kind,status,reason,owner_role) VALUES($1,$2,'CONNECTOR','OPEN','connector','PRACTICE_MANAGER')",
+        [tenant, cases.EXCEPTION],
+      );
+      const snapshot = async () => {
+        const out: Record<string, unknown[]> = {};
+        for (const table of [
+          "access_cases",
+          "referrals",
+          "evidence_events",
+          "executions",
+          "outbox",
+          "work_items",
+          "access_case_transitions",
+          "access_case_observations",
+        ])
+          out[table] = (
+            await pool.query(
+              `SELECT to_jsonb(t) AS row FROM ${table} t WHERE tenant_id=$1 ORDER BY to_jsonb(t)::text`,
+              [tenant],
+            )
+          ).rows.map((r) => r.row);
+        return out;
+      };
+      const before = await snapshot();
+
+      expect((await migrate(pool)).applied).toEqual([
+        "0006_appointment_operations",
+      ]);
+      expect(await snapshot()).toEqual(before);
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN");
+        for (const id of Object.values(cases))
+          expect(await verifyEvidenceChain(c, tenant, id)).toMatchObject({
+            valid: true,
+            events: 3,
+          });
+        await c.query("COMMIT");
+      } finally {
+        c.release();
+      }
+      // Referral transitions and resolutions behave exactly as before.
+      await expect(
+        pool.query(
+          "UPDATE access_cases SET current_state='READY_FOR_BOOKING',version=version+1 WHERE id=$1",
+          [cases.RECEIVED],
+        ),
+      ).rejects.toThrow(
+        /invalid case transition RECEIVED -> READY_FOR_BOOKING/,
+      );
+      await pool.query(
+        "UPDATE access_cases SET current_state='WAITING',version=version+1 WHERE id=$1",
+        [cases.READY_FOR_BOOKING],
+      );
+      await expect(
+        pool.query(
+          "UPDATE access_cases SET current_state='CLOSED',version=version+1,resolution_code='WITHDRAWN',resolved_at=now(),outcome_at=now(),resolution_source='STAFF',resolution_actor_id='t' WHERE id=$1",
+          [cases.WAITING],
+        ),
+      ).rejects.toThrow(/case_withdrawn_is_request/);
+      // New tables exist, are empty and fail closed without tenant context.
+      for (const table of [
+        "appointment_requests",
+        "appointments",
+        "appointment_slot_holds",
+      ]) {
+        const rls = await pool.query(
+          "SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE relname=$1",
+          [table],
+        );
+        expect(rls.rows[0]).toEqual({
+          relrowsecurity: true,
+          relforcerowsecurity: true,
+        });
+        expect(
+          (await pool.query(`SELECT count(*)::int n FROM ${table}`)).rows[0].n,
+        ).toBe(0);
+      }
       expect((await migrate(pool)).applied).toEqual([]);
     } finally {
       await pool.end();

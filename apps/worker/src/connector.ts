@@ -6,36 +6,23 @@ import {
   type ConnectorResult,
   type ReferralStatus,
 } from "@access/contracts";
+import {
+  AmbiguousConnectorError,
+  SafeRetryableConnectorError,
+  UnsupportedOperationError,
+} from "./connector-errors.js";
+import {
+  MockAppointmentDestination,
+  type MockDestinationOptions,
+} from "./mock-destination.js";
 
 /**
- * Connector port and error taxonomy.
- *
- * The dispatcher may retry automatically ONLY when the foreign effect is
- * known not to have happened. Anything else about a consequential write is
- * AMBIGUOUS and goes to read-back reconciliation by the original
- * execution_id; it is never blindly executed again.
+ * Connector port. The error taxonomy lives in connector-errors.ts: the
+ * dispatcher may retry automatically ONLY when the foreign effect is known
+ * not to have happened; anything else about a consequential write is
+ * AMBIGUOUS and is read back by the original execution_id, never re-sent.
  */
-export class ConnectorError extends Error {
-  constructor(
-    message: string,
-    readonly code: string,
-  ) {
-    super(message);
-  }
-}
-/** The request never reached the foreign system (pre-send, explicit 429...). */
-export class SafeRetryableConnectorError extends ConnectorError {}
-/** The foreign system definitively refused; nothing was committed. */
-export class PermanentConnectorError extends ConnectorError {}
-/** The foreign system may have committed (timeout after send, lost connection). */
-export class AmbiguousConnectorError extends ConnectorError {}
-export class UnsupportedOperationError extends ConnectorError {
-  constructor(readonly capability: string) {
-    super(`capability ${capability} is not supported`, "UNSUPPORTED_OPERATION");
-  }
-}
-/** Response could not be parsed; the effect may have happened. */
-export class InvalidConnectorResponseError extends ConnectorError {}
+export * from "./connector-errors.js";
 
 export interface CapabilityDescriptor {
   capability: Capability;
@@ -150,11 +137,18 @@ export interface MockOptions {
    */
   idempotent?: boolean;
   appointmentOutcome?: AppointmentOutcome["outcome"];
+  /** The synthetic appointment destination (holds, faults, clock). */
+  appointments?: MockDestinationOptions;
 }
 const MOCK_CAPABILITIES: Capability[] = [
   "patient.lookup",
   "referral.create",
   "referral.status.read",
+  "appointment.availability.read",
+  "appointment.hold",
+  "appointment.create",
+  "appointment.reschedule",
+  "appointment.cancel",
   "appointment.status.read",
 ];
 
@@ -170,7 +164,15 @@ export class MockConnector implements Connector {
   readonly outcomes = new Map<string, AppointmentOutcome>();
   private reconcilePolls = new Map<string, number>();
   private failures = new Map<string, number>();
-  constructor(private options: MockOptions = {}) {}
+  /** Slots, holds and appointments of the synthetic destination. */
+  readonly destination: MockAppointmentDestination;
+  constructor(private options: MockOptions = {}) {
+    this.destination = new MockAppointmentDestination({
+      idempotent: options.idempotent ?? true,
+      reconcileAmbiguousPolls: options.reconcileAmbiguousPolls ?? 0,
+      ...options.appointments,
+    });
+  }
   get fault(): FaultMode {
     return this.options.fault ?? "success";
   }
@@ -178,7 +180,10 @@ export class MockConnector implements Connector {
     this.options.fault = fault;
   }
   capabilities(): CapabilityDescriptor[] {
-    return MOCK_CAPABILITIES.map((capability) => ({
+    return MOCK_CAPABILITIES.filter(
+      // A destination that cannot hold does not declare holds at all.
+      (c) => c !== "appointment.hold" || this.destination.holdsSupported,
+    ).map((capability) => ({
       capability,
       idempotentByExecutionId: this.options.idempotent ?? true,
     }));
@@ -204,6 +209,8 @@ export class MockConnector implements Connector {
   async execute(request: ConnectorRequest): Promise<ConnectorResult> {
     const id = request.execution_id;
     this.executeCalls.set(id, (this.executeCalls.get(id) ?? 0) + 1);
+    if (request.operation.startsWith("appointment."))
+      return this.destination.execute(request);
     if (request.operation !== "referral.create")
       return this.result(id, {
         status: "UNSUPPORTED_OPERATION",
@@ -274,6 +281,8 @@ export class MockConnector implements Connector {
     return this.result(id, { status: "SUCCEEDED", external_id: external });
   }
   async reconcile(request: ConnectorRequest): Promise<ConnectorResult> {
+    if (request.operation.startsWith("appointment."))
+      return this.destination.reconcile(request);
     const id = request.execution_id;
     const polls = (this.reconcilePolls.get(id) ?? 0) + 1;
     this.reconcilePolls.set(id, polls);

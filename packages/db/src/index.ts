@@ -2,6 +2,7 @@ export * from "./runtime.js";
 export * from "./evidence.js";
 export * from "./commands.js";
 export * from "./cases.js";
+export * from "./appointments.js";
 export * from "./rules.js";
 export * from "./metrics.js";
 export * from "./migrations.js";

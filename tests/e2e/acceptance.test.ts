@@ -640,13 +640,30 @@ describe.runIf(databaseEnabled)("ACCESS v1.1 acceptance suite", () => {
       method: "POST",
       url: "/v1/cases",
       headers: staff(tenant),
-      payload: { case_type: "APPOINTMENT_REQUEST", ...ingestBody() },
+      payload: { case_type: "STATUS_ENQUIRY", ...ingestBody() },
     });
     expect(res.statusCode).toBe(422);
     expect(res.json().error).toBe("CASE_TYPE_DISABLED");
+    // Enabled appointment operations cases are never created directly.
+    for (const caseType of [
+      "APPOINTMENT_REQUEST",
+      "RESCHEDULING_REQUEST",
+      "CANCELLATION_REQUEST",
+    ]) {
+      const direct = await t.app.inject({
+        method: "POST",
+        url: "/v1/cases",
+        headers: staff(tenant),
+        payload: { case_type: caseType, ...ingestBody() },
+      });
+      expect(direct.statusCode, caseType).toBe(422);
+      expect(direct.json().error).toBe("CASE_TYPE_NOT_CREATABLE");
+    }
+    expect((await tableCounts(tenant)).access_cases).toBe(0);
+    // Tamper: a still-disabled case type with a consequential outbox item.
     const caseId = randomUUID();
     await ownerPool().query(
-      "INSERT INTO access_cases(id,tenant_id,case_type,source_channel,current_state,opened_at) VALUES($1,$2,'APPOINTMENT_REQUEST','API','DESTINATION_PENDING',now())",
+      "INSERT INTO access_cases(id,tenant_id,case_type,source_channel,current_state,opened_at) VALUES($1,$2,'STATUS_ENQUIRY','API','DESTINATION_PENDING',now())",
       [caseId, tenant],
     );
     const executionId = randomUUID();

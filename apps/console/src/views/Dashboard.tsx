@@ -5,6 +5,7 @@ import { PerspectiveGrid } from "../components/PerspectiveGrid";
 import { measureInputs, ProvenanceTag } from "../components/Provenance";
 import {
   duration,
+  kindLabel,
   label,
   percent,
   RESOLUTION_LABELS,
@@ -16,7 +17,7 @@ import { Reveal } from "../motion/Reveal";
 import { usePointerDepth } from "../motion/usePointerDepth";
 import { useScrollProgress } from "../motion/useScrollProgress";
 import { useSession } from "../session";
-import type { Cohort, Measure } from "../types";
+import type { BookingMetrics, Cohort, Measure } from "../types";
 
 const PERIODS: [string, number][] = [
   ["Last 7 days", 7],
@@ -26,6 +27,7 @@ const PERIODS: [string, number][] = [
 const CHAPTERS = [
   { id: "flow", title: "Flow" },
   { id: "conversion", title: "Conversion" },
+  { id: "booking", title: "Booking" },
   { id: "delay", title: "Delay" },
   { id: "exceptions", title: "Exceptions" },
   { id: "work", title: "Work" },
@@ -198,6 +200,7 @@ function Story({ data, loading }: { data: Cohort; loading: boolean }) {
             ])}
           />
         </Chapter>
+        {data.booking && <BookingChapter keep={keep} b={data.booking} />}
         <Chapter
           id="delay"
           keep={keep}
@@ -258,7 +261,7 @@ function Story({ data, loading }: { data: Cohort; loading: boolean }) {
             title="Top exception reasons"
             empty="No exceptions raised for this period."
             rows={data.top_exception_reasons.map((r) => [
-              label(r.kind),
+              kindLabel(r.kind),
               r.count,
               String(r.count),
             ])}
@@ -296,6 +299,82 @@ function Story({ data, loading }: { data: Cohort; loading: boolean }) {
         <Legend compact />
       </div>
     </div>
+  );
+}
+
+/** The Booking stage: from ready for booking to a booked appointment. */
+function BookingChapter({
+  keep,
+  b,
+}: {
+  keep: (id: ChapterId) => (el: HTMLElement | null) => void;
+  b: BookingMetrics;
+}) {
+  return (
+    <Chapter
+      id="booking"
+      keep={keep}
+      title="Booking"
+      lede="What happened between ready for booking and a booked appointment, including the bookings ACCESS made with the destination system."
+    >
+      <div className="figures figures--pair">
+        <Figure
+          label="Ready for booking to booked (known outcomes)"
+          m={b.ready_to_booked_conversion}
+          format={percent}
+          lead
+        />
+        <Figure label="Booked by ACCESS" m={b.booked_by_access} />
+      </div>
+      <ol className="ledger ledger--time">
+        <LedgerRow
+          label="Ready for booking to booked (median)"
+          m={b.median_ready_to_booked_seconds}
+          format={duration}
+        />
+        <LedgerRow
+          label="Ready for booking to booked (95th percentile)"
+          m={b.p95_ready_to_booked_seconds}
+          format={duration}
+        />
+      </ol>
+      <ol className="ledger">
+        <LedgerRow label="Booking requests" m={b.booking_requests} />
+        <LedgerRow
+          label="Booking attempts per booked appointment"
+          m={b.booking_attempts_per_booked}
+          format={ratio}
+        />
+        <LedgerRow
+          label="Availability searches per booked appointment"
+          m={b.availability_searches_per_booked}
+          format={ratio}
+        />
+        <LedgerRow
+          label="Selected slot to booked"
+          m={b.selection_to_booking_success}
+          format={percent}
+        />
+        <LedgerRow
+          label="Booking requests withdrawn"
+          m={b.abandoned_booking_requests}
+        />
+        <LedgerRow label="Reschedules completed" m={b.reschedules_completed} />
+        <LedgerRow
+          label="Cancellations completed"
+          m={b.cancellations_completed}
+        />
+        <LedgerRow
+          label="Writes the destination did not confirm at first"
+          m={b.ambiguous_appointment_writes}
+        />
+        <LedgerRow
+          label="Staff interventions per booking request"
+          m={b.interventions_per_booking_request}
+          format={ratio}
+        />
+      </ol>
+    </Chapter>
   );
 }
 
