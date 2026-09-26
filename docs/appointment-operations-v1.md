@@ -325,15 +325,18 @@ The existing console gains the Booking stage; there is no separate
 appointments app. A referral that may start booking shows Start booking (or
 why it may not); an appointment request shows Availability → Select → Hold →
 Commit → Confirm (reschedule: new booking, check, cancel original;
-cancellation: requested, submitted, cancelled) with plain-language status,
+cancellation: requested, submitted, cancelled; a skipped hold shows "Not
+used", never done) with plain-language status,
 the slots grouped by local day (not reserved until held or booked; stale
 after 10 minutes), a hold countdown, a confirmation step before every
 consequential command, and recovery (check again, attest absent, attest the
 original cancelled) when the destination could not confirm. The page follows
 the worker while a step runs. The queue adds Booking in progress, Reschedule
-and Cancellation lenses and says what kind of work each row is; the
-dashboard adds a Booking chapter. Staff never see execution states, codes or
-connector names.
+and Cancellation lenses and says what kind of work each row is; on desktop
+the views after the stage line wrap onto a second row so every lens stays
+visible. The dashboard adds a Booking chapter. Staff never see execution
+states, codes or connector names. Screenshots (synthetic data):
+[design/appointment-operations](design/appointment-operations/).
 
 ## 17. Qualification
 

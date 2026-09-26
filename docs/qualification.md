@@ -55,7 +55,9 @@ the new tables, that their rows cannot be deleted, and that refusals and logs
 carry no patient details.
 
 The console was verified in Chromium against the local synthetic stack
-(synthetic names only; screenshots are not committed): start booking,
+(synthetic data only; screenshots in
+[design/appointment-operations](design/appointment-operations/)), 37 checks
+for the main flow and 14 for the unconfirmed states: start booking,
 availability, keyboard slot choice with visible focus, hold countdown,
 booking with read-back, confirmation, reschedule, cancellation, the
 unconfirmed-booking states and staff attestation, queue lenses, the
