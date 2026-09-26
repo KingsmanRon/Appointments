@@ -101,8 +101,15 @@ export async function queue(
        FROM access_cases c
        LEFT JOIN referrals r ON r.tenant_id=c.tenant_id AND r.case_id=c.id
        LEFT JOIN appointment_requests ar ON ar.tenant_id=c.tenant_id AND ar.case_id=c.id
-       LEFT JOIN LATERAL (SELECT status, escalated_at FROM executions x WHERE x.tenant_id=c.tenant_id AND x.case_id=c.id
-                           ORDER BY x.created_at DESC LIMIT 1) e ON TRUE
+       -- Referrals: the latest execution. Appointment requests: the step the
+       -- request waits on, else the latest step that ran (a planned step has
+       -- not happened; one settled by staff no longer speaks for the case).
+       LEFT JOIN LATERAL (SELECT x.status, x.escalated_at FROM executions x
+                            LEFT JOIN outbox ob ON ob.tenant_id=x.tenant_id AND ob.execution_id=x.id
+                           WHERE x.tenant_id=c.tenant_id AND x.case_id=c.id
+                             AND (c.case_type='REFERRAL' OR (ob.status IS DISTINCT FROM 'BLOCKED' AND x.superseded_at IS NULL))
+                           ORDER BY (x.id = ar.pending_execution_id) IS TRUE DESC, x.created_at DESC, ob.id DESC NULLS LAST
+                           LIMIT 1) e ON TRUE
       WHERE c.tenant_id=$1 AND ${FILTERS[filter]}
       ORDER BY c.opened_at ASC, c.id
       LIMIT $2 OFFSET $3`,
@@ -239,9 +246,11 @@ export async function caseDetail(
       [tenantId, caseId],
     ),
     c.query(
-      `SELECT id,operation,status,attempts,reconcile_attempts,external_id,last_error,first_ambiguous_at,last_reconcile_at,
-              next_reconcile_at,escalated_at,superseded_at,superseded_reason,created_at,updated_at
-         FROM executions WHERE tenant_id=$1 AND case_id=$2 ORDER BY created_at`,
+      `SELECT e.id,e.operation,e.status,e.attempts,e.reconcile_attempts,e.external_id,e.last_error,e.first_ambiguous_at,e.last_reconcile_at,
+              e.next_reconcile_at,e.escalated_at,e.superseded_at,e.superseded_reason,e.created_at,e.updated_at,
+              coalesce(o.status='BLOCKED',false) AS planned
+         FROM executions e LEFT JOIN outbox o ON o.tenant_id=e.tenant_id AND o.execution_id=e.id
+        WHERE e.tenant_id=$1 AND e.case_id=$2 ORDER BY e.created_at, o.id NULLS LAST, e.id`,
       [tenantId, caseId],
     ),
     c.query(

@@ -346,5 +346,23 @@ describe("plain-language status", () => {
         exceptionReason: "reconciliation_escalated",
       }),
     ).toBe("Resolve exception: reconciliation_escalated");
+    // Known appointment exceptions say what to do, in staff words.
+    expect(
+      appointmentNextAction({
+        caseType: "RESCHEDULING_REQUEST",
+        state: "EXCEPTION",
+        workflowStatus: "ORIGINAL_CANCELLATION_PENDING",
+        exceptionReason:
+          "original_cancellation_unconfirmed:both_appointments_may_exist",
+      }),
+    ).toMatch(/may both exist/);
+    expect(
+      appointmentNextAction({
+        caseType: "APPOINTMENT_REQUEST",
+        state: "EXCEPTION",
+        workflowStatus: "BOOKING_SUBMITTED",
+        exceptionReason: "booking_outcome_unknown",
+      }),
+    ).toMatch(/^Check the destination system/);
   });
 });

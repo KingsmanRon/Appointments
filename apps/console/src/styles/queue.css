@@ -126,6 +126,15 @@
   position: relative;
   padding: 0 3px;
 }
+/* Changes to booked appointments: a small group after the line. */
+.lens-group {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-left: var(--s-3);
+  border-left: 1px solid var(--c-line-2);
+}
 .queue-status {
   display: flex;
   align-items: center;
@@ -225,6 +234,34 @@
   font-weight: 620;
   letter-spacing: 0.01em;
 }
+/* Rows that are not referrals say what they are, and whose. */
+.kind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--s-2);
+  margin-top: var(--s-1);
+  font-size: var(--t-xs);
+}
+.kind__tag {
+  padding: 0 6px;
+  border-radius: var(--r-1);
+  background: var(--c-progress-bg);
+  color: var(--c-progress-fg);
+  font-weight: 650;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.kind__tag--rescheduling-request,
+.kind__tag--cancellation-request {
+  background: var(--c-surface-3);
+  color: var(--c-ink-2);
+  box-shadow: inset 0 0 0 1px var(--c-line-2);
+}
+.kind__for {
+  color: var(--c-ink-3);
+  white-space: nowrap;
+}
 .c-case .work,
 .c-position .reason {
   display: block;
@@ -297,6 +334,10 @@
   }
   .lens-line li {
     padding: 0 2px;
+  }
+  .lens-group {
+    gap: var(--s-1);
+    padding-left: var(--s-2);
   }
   .queue-table th,
   .queue-table td {

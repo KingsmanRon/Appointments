@@ -106,15 +106,18 @@ function Glyph({ tone }: { tone: Tone }) {
 export function StateBadge({
   state,
   large = false,
+  text,
 }: {
   state: CaseState | string;
   large?: boolean;
+  /** Plain words for a sub-step (booking); the tone stays the state's. */
+  text?: string | undefined;
 }) {
   const tone = toneOf(state);
   return (
     <span className={`state state--${tone}${large ? " state--lg" : ""}`}>
       <Glyph tone={tone} />
-      {STATE_LABELS[state] ?? label(state)}
+      {text ?? STATE_LABELS[state] ?? label(state)}
     </span>
   );
 }
@@ -126,12 +129,21 @@ export function StateBadge({
 export function StationTrack({
   state,
   workKinds = [],
+  caseType = "REFERRAL",
 }: {
   state: string;
   workKinds?: readonly string[];
+  caseType?: string | undefined;
 }) {
   const exception = state === "EXCEPTION";
-  const at = exception ? heldStation(workKinds) : stationOf(state);
+  // Appointment work happens at the Booking station until it is finished.
+  const booking = caseType !== "REFERRAL";
+  const at =
+    booking && !isTerminal(state)
+      ? 4
+      : exception
+        ? heldStation(workKinds)
+        : stationOf(state);
   const tone = toneOf(state);
   const step = 13;
   const x = (i: number) => 5 + i * step;

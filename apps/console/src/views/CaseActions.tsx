@@ -88,6 +88,13 @@ export function Actions({ view, onDone }: { view: View; onDone: () => void }) {
   const reviewObservations = view.observations.filter(
     (o: any) => o.disposition === "REVIEW",
   );
+  // While ACCESS is booking this referral, its outcome is the booking's.
+  const bookingActive = (view.appointment_requests ?? []).some(
+    (r: any) =>
+      !["BOOKED", "COMPLETED", "CANCELLED", "WITHDRAWN"].includes(
+        r.workflow_status,
+      ),
+  );
   const available: [string, string][] = [];
   if (
     state === "IDENTITY_PENDING" ||
@@ -119,7 +126,7 @@ export function Actions({ view, onDone }: { view: View; onDone: () => void }) {
     )
   )
     available.push(["resolve_exception", "Resolve work item"]);
-  if (["READY_FOR_BOOKING", "WAITING"].includes(state)) {
+  if (["READY_FOR_BOOKING", "WAITING"].includes(state) && !bookingActive) {
     available.push(["record_booking", "Record booking"]);
     available.push(["record_follow_up", "Record follow-up attempt"]);
     available.push(["record_patient_unreachable", "Patient unreachable"]);
@@ -133,7 +140,8 @@ export function Actions({ view, onDone }: { view: View; onDone: () => void }) {
       "REJECTED",
       "DESTINATION_PENDING",
       "RECEIVED",
-    ].includes(state)
+    ].includes(state) &&
+    !bookingActive
   )
     available.push(["close", "Close with reason"]);
   if (["IDENTITY_PENDING", "INFORMATION_MISSING", "EXCEPTION"].includes(state))
@@ -271,7 +279,11 @@ export function Actions({ view, onDone }: { view: View; onDone: () => void }) {
     </fieldset>
   );
   const names = Object.fromEntries(available);
-  const suggested = SUGGESTED[state];
+  // Automated booking (the Booking panel) comes first when it is possible.
+  const suggested =
+    view.booking?.eligible && ["READY_FOR_BOOKING", "WAITING"].includes(state)
+      ? undefined
+      : SUGGESTED[state];
   const field = (
     id: string,
     text: React.ReactNode,

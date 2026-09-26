@@ -1011,7 +1011,7 @@ export class AppointmentOperations {
           workflow_status: "SLOT_SELECTED",
           current_hold_id: null,
           pending_execution_id: null,
-          last_failure_code: "HOLD_NOT_COMMITTED",
+          last_failure_code: "ATTESTED_NOT_COMMITTED",
           last_failure_at: failedAt,
         });
         break;
@@ -1022,7 +1022,7 @@ export class AppointmentOperations {
           workflow_status: held ? "HELD" : "SLOT_SELECTED",
           current_hold_id: held ? rowIn.current_hold_id : null,
           pending_execution_id: null,
-          last_failure_code: "BOOKING_NOT_COMMITTED",
+          last_failure_code: "ATTESTED_NOT_COMMITTED",
           last_failure_at: failedAt,
         });
         break;
@@ -1031,7 +1031,7 @@ export class AppointmentOperations {
         row = await updateRequest(c, rowIn, {
           workflow_status: "CANCELLATION_REQUESTED",
           pending_execution_id: null,
-          last_failure_code: "CANCELLATION_NOT_COMMITTED",
+          last_failure_code: "ATTESTED_NOT_COMMITTED",
           last_failure_at: failedAt,
         });
         break;

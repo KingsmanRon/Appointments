@@ -470,8 +470,22 @@ export function appointmentNextAction(input: {
   exceptionReason?: string | null;
   confirmationStatus?: "UNCONFIRMED" | "CONFIRMED" | null;
 }): string {
-  if (input.state === "EXCEPTION")
-    return `Resolve exception${input.exceptionReason ? `: ${input.exceptionReason}` : ""}`;
+  if (input.state === "EXCEPTION") {
+    const reason = input.exceptionReason ?? "";
+    if (/both_appointments|original_already_cancelled/.test(reason))
+      return "Check the destination system: the original and the new appointment may both exist";
+    if (reason.endsWith("_outcome_unknown"))
+      return "Check the destination system: it has not confirmed whether the last step happened";
+    if (/_not_verified|_verification_not_planned/.test(reason))
+      return "Check the destination system for the booked appointment, then ask ACCESS to check again";
+    if (reason.startsWith("availability_unavailable"))
+      return "Search again, or withdraw and book by hand";
+    if (reason.startsWith("booking_refused"))
+      return "Choose another slot, or withdraw and book by hand";
+    if (reason.startsWith("cancellation_refused"))
+      return "Check the destination system, then submit the cancellation again or withdraw";
+    return `Resolve exception${reason ? `: ${reason}` : ""}`;
+  }
   switch (input.workflowStatus) {
     case "AVAILABILITY_REQUESTED":
       return "Searching the destination for appointments (automated)";
