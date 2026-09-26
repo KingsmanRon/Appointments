@@ -164,7 +164,7 @@ connector metadata is stored.
 - Unheld booking relies on the destination's atomic commit: a lost race comes
   back as `SLOT_UNAVAILABLE` and the request returns to selection.
 - Every hold has an expiry set by the destination. The API refuses to submit a
-  booking against a hold with less than 15 seconds left (`HOLD_EXPIRED`); the
+  booking against a hold with 15 seconds or less left (`HOLD_EXPIRED`); the
   worker's timer marks lapsed holds `EXPIRED`; a database trigger allows only
   `ACTIVE → CONSUMED | RELEASED | EXPIRED`, so an expired hold can never be
   consumed.
