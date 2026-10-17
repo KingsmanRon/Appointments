@@ -53,7 +53,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
     const pool = await scratchDatabase();
     try {
       const first = await migrate(pool);
-      expect(first.applied).toHaveLength(6);
+      expect(first.applied).toHaveLength(7);
       const second = await migrate(pool);
       expect(second).toEqual({
         applied: [],
@@ -74,7 +74,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
     const pool = await scratchDatabase();
     try {
       const [a, b] = await Promise.all([migrate(pool), migrate(pool)]);
-      expect([...a.applied, ...b.applied].sort()).toHaveLength(6);
+      expect([...a.applied, ...b.applied].sort()).toHaveLength(7);
     } finally {
       await pool.end();
     }
@@ -176,6 +176,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
         "0004_interactions_outcomes_rules",
         "0005_workforce_identity_and_privileges",
         "0006_appointment_operations",
+        "0007_native_scheduling",
       ]);
     } finally {
       await pool.end();
@@ -285,7 +286,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
       );
 
       const result = await migrate(pool);
-      expect(result.applied).toHaveLength(4);
+      expect(result.applied).toHaveLength(5);
       const cases = await pool.query(
         "SELECT id,current_state,version,legacy_referral_state,resolution_code FROM access_cases WHERE tenant_id=$1",
         [tenant],
@@ -511,6 +512,7 @@ describe.runIf(databaseEnabled)("ledger migrations and legacy backfill", () => {
 
       expect((await migrate(pool)).applied).toEqual([
         "0006_appointment_operations",
+        "0007_native_scheduling",
       ]);
       expect(await snapshot()).toEqual(before);
       const c = await pool.connect();

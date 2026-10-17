@@ -90,6 +90,8 @@ export async function verifyRuntimeIdentity(
 export interface RequestContext {
   userId?: string | undefined;
   actorRole?: StaffRole | null | undefined;
+  /** user:<sub> or synthetic:<user>; scopes a PRACTITIONER to their calendar. */
+  actorId?: string | undefined;
 }
 /**
  * Run `fn` in a transaction whose tenant (and, for staff requests, user and
@@ -106,8 +108,13 @@ export async function tenantTx<T>(
   try {
     await c.query("BEGIN");
     await c.query(
-      "SELECT set_config('app.tenant_id',$1,true), set_config('app.user_id',$2,true), set_config('app.actor_role',$3,true)",
-      [tenantId, context.userId ?? "", context.actorRole ?? ""],
+      "SELECT set_config('app.tenant_id',$1,true), set_config('app.user_id',$2,true), set_config('app.actor_role',$3,true), set_config('app.actor_id',$4,true)",
+      [
+        tenantId,
+        context.userId ?? "",
+        context.actorRole ?? "",
+        context.actorId ?? "",
+      ],
     );
     const value = await fn(c);
     await c.query("COMMIT");
