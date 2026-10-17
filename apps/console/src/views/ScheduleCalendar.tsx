@@ -110,6 +110,9 @@ export function ScheduleCalendar() {
   }, [load]);
 
   const open = async (a: ScheduledAppointment) => {
+    // The selected appointment's day becomes the current one, so switching
+    // to the day view shows it (the week shown does not change).
+    setAnchor(localDate(new Date(a.starts_at), a.timezone));
     try {
       setSelected(
         await api<AppointmentDetail>(
