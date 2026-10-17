@@ -32,7 +32,7 @@ that looks urgent or clinical is routed to a human safety workflow.
 | Managed private artifact storage (Supabase Storage + app-layer AES-GCM)               | yes                   | yes (after bucket provisioning)                | needs key rotation                   |
 | Malware scanning (ClamAV INSTREAM sidecar), fail closed                               | yes                   | yes (after clamd deployment)                   | needs signature monitoring           |
 | Manual destination workflow (staff enters referral in the PMS)                        | yes                   | **yes — the pilot destination path**           | yes                                  |
-| Automated destination connector                                                       | mock only             | **no** (no real PMS connector qualified)       | no                                   |
+| Automated destination connector                                                       | mock; DTM (synthetic) | **no** (DTM connector not yet qualified)       | no                                   |
 | Closed-loop outcome readback                                                          | port + mock           | staff/import only                              | needs a qualified connector          |
 | Staff console: queue, case detail, actions, booking stage, dashboard, rules           | yes                   | yes                                            | needs usability/accessibility review |
 | Email / WhatsApp / voice / patient portal channels                                    | defined, disabled     | no                                             | future                               |
@@ -69,6 +69,7 @@ Read next: [ADR 0002 — case aggregate](docs/adr/0002-access-case-aggregate.md)
 [security](docs/security.md), [deployment](docs/deployment.md),
 [runbooks](docs/runbooks.md), [rules guide](docs/rules-guide.md),
 [connector qualification](docs/connector-qualification.md),
+[DTM connector](docs/connectors/dtm.md),
 [synthetic qualification](docs/qualification.md),
 [appointment operations v1](docs/appointment-operations-v1.md).
 

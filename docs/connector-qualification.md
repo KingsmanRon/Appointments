@@ -6,6 +6,11 @@ destination workflow and manual booking. A connector may be
 enabled for real data only after every item below passes against the client's
 test system, with evidence.
 
+The [DTM connector](connectors/dtm.md) (`CONNECTOR_KIND=dtm`) delivers
+referrals to DTM's Referral inbox. It runs in synthetic mode only: the worker
+refuses it with REAL data until its qualification list passes against a DTM
+staging copy.
+
 ## Port
 
 Implement `Connector` (`apps/worker/src/connector.ts`):
