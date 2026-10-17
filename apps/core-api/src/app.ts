@@ -12,6 +12,9 @@ import {
   QUEUE_FILTERS,
   appointmentActionSchema,
   appointmentChangeSchema,
+  blockCreateSchema,
+  blockRemoveSchema,
+  bookAppointmentSchema,
   caseActionSchema,
   cohortQuerySchema,
   createCaseRequestSchema,
@@ -19,8 +22,13 @@ import {
   interactionRequestSchema,
   membershipUpsertSchema,
   observationImportSchema,
+  practitionerCreateSchema,
   resolutionSchema,
+  SCHEDULE_CHANGES,
+  scheduleChangeSchema,
+  scheduleRangeSchema,
   uuid,
+  workingHoursSchema,
 } from "@access/contracts";
 import {
   AppError,
@@ -38,11 +46,13 @@ import { assertDirectlyCreatable, authorize } from "@access/policy";
 import { RuleValidationError } from "@access/rules";
 import type { AuthContext, Authenticator } from "./auth.js";
 import { appointmentDetail, caseDetail, queue } from "./queries.js";
+import type { ScheduleService } from "./schedule.js";
 import { CaseService } from "./service.js";
 
 export interface AppDeps {
   pool: Pool;
   service: CaseService;
+  schedule: ScheduleService;
   authenticator: Authenticator;
   corsOrigins: string[];
   info: { profile: string; dataMode: string; buildId: string };
@@ -276,6 +286,111 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return deps.service.importObservations(
       a,
       observationImportSchema.parse(req.body),
+    );
+  });
+
+  // Native scheduling: the practice's own appointment book.
+  const param = (req: FastifyRequest, name: string) =>
+    uuid.parse((req.params as Record<string, string>)[name]);
+  app.get("/v1/schedule/practitioners", async (req) =>
+    deps.schedule.listPractitioners(await auth(req)),
+  );
+  app.post("/v1/schedule/practitioners", async (req, reply) => {
+    const a = await auth(req);
+    authorize(a.role, "schedule.configure");
+    const result = await deps.schedule.createPractitioner(
+      a,
+      practitionerCreateSchema.parse(req.body),
+    );
+    return reply.code(result.deduplicated ? 200 : 201).send(result);
+  });
+  app.post(
+    "/v1/schedule/practitioners/:practitionerId/working-hours",
+    async (req) => {
+      const a = await auth(req);
+      authorize(a.role, "schedule.configure");
+      return deps.schedule.setWorkingHours(
+        a,
+        param(req, "practitionerId"),
+        workingHoursSchema.parse(req.body),
+      );
+    },
+  );
+  app.post(
+    "/v1/schedule/practitioners/:practitionerId/blocks",
+    async (req, reply) => {
+      const a = await auth(req);
+      authorize(a.role, "schedule.configure");
+      const result = await deps.schedule.addBlock(
+        a,
+        param(req, "practitionerId"),
+        blockCreateSchema.parse(req.body),
+      );
+      return reply.code(result.deduplicated ? 200 : 201).send(result);
+    },
+  );
+  app.post(
+    "/v1/schedule/practitioners/:practitionerId/blocks/:blockId/remove",
+    async (req) => {
+      const a = await auth(req);
+      authorize(a.role, "schedule.configure");
+      return deps.schedule.removeBlock(
+        a,
+        param(req, "practitionerId"),
+        param(req, "blockId"),
+        blockRemoveSchema.parse(req.body).command_id,
+      );
+    },
+  );
+  app.get(
+    "/v1/schedule/practitioners/:practitionerId/availability",
+    async (req) => {
+      const a = await auth(req);
+      authorize(a.role, "schedule.read");
+      return deps.schedule.availability(
+        a,
+        param(req, "practitionerId"),
+        scheduleRangeSchema.parse(req.query),
+      );
+    },
+  );
+  // A practitioner's calendar. A PRACTITIONER always gets their own.
+  app.get("/v1/schedule/calendar", async (req) => {
+    const a = await auth(req);
+    const q = z
+      .object({ practitioner_id: uuid.optional() })
+      .passthrough()
+      .parse(req.query);
+    const { from, to } = scheduleRangeSchema.parse(req.query);
+    return deps.schedule.calendar(a, q.practitioner_id, { from, to });
+  });
+  app.post("/v1/schedule/appointments", async (req, reply) => {
+    const a = await auth(req);
+    authorize(a.role, "schedule.book");
+    const result = await deps.schedule.book(
+      a,
+      bookAppointmentSchema.parse(req.body),
+    );
+    return reply.code(result.deduplicated ? 200 : 201).send(result);
+  });
+  app.get("/v1/schedule/appointments/:appointmentId", async (req) =>
+    deps.schedule.appointment(await auth(req), param(req, "appointmentId")),
+  );
+  app.post("/v1/schedule/appointments/:appointmentId/actions", async (req) => {
+    const a = await auth(req);
+    // Authorise the named change before validating the rest of the body.
+    const named = z
+      .object({ action: z.enum(SCHEDULE_CHANGES as [string, ...string[]]) })
+      .passthrough()
+      .parse(req.body);
+    authorize(
+      a.role,
+      named.action === "complete" ? "schedule.complete" : "schedule.change",
+    );
+    return deps.schedule.change(
+      a,
+      param(req, "appointmentId"),
+      scheduleChangeSchema.parse(req.body),
     );
   });
 

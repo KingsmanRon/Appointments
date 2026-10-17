@@ -9,6 +9,7 @@ import {
   MockSyntheticScanner,
   type ArtifactScanner,
 } from "./scanner.js";
+import { ScheduleService } from "./schedule.js";
 import { CaseService } from "./service.js";
 import {
   LocalEncryptedArtifactStore,
@@ -72,6 +73,7 @@ const service = new CaseService({
 const app = await buildApp({
   pool,
   service,
+  schedule: new ScheduleService({ pool }),
   authenticator:
     config.auth.mode === "jwt"
       ? new JwtAuthenticator(config.auth, pool)
