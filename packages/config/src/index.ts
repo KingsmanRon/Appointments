@@ -327,13 +327,24 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
   return config;
 }
 
+export type ConnectorKind = "mock" | "none" | "dtm";
+/** The DTM integration API (docs/connectors/dtm.md). Worker-only. */
+export interface DtmConnectorConfig {
+  /** Origin only, e.g. https://dtm.example.org: request paths are signed. */
+  baseUrl: string;
+  keyId: string;
+  /** Shared signing secret. Never logged, never sent. */
+  secret: string;
+  timeoutMs: number;
+}
 export interface WorkerConfig extends Common {
   runtime: "worker";
   databaseUrl: string;
   connector: {
-    kind: "mock" | "none";
+    kind: ConnectorKind;
     capabilities: Capability[];
     faultMode: string;
+    dtm?: DtmConnectorConfig;
   };
   dispatchMaxAttempts: number;
   dispatchRetrySeconds: number;
@@ -344,7 +355,7 @@ export interface WorkerConfig extends Common {
 }
 /** Capabilities each connector implementation has actually qualified. */
 export const CONNECTOR_IMPLEMENTED: Record<
-  "mock" | "none",
+  ConnectorKind,
   readonly Capability[]
 > = {
   mock: [
@@ -359,7 +370,58 @@ export const CONNECTOR_IMPLEMENTED: Record<
     "appointment.status.read",
   ],
   none: [],
+  // Referral delivery to DTM's inbox and its read-back. DTM has no
+  // appointment book: booking stays manual.
+  dtm: ["referral.create", "referral.status.read"],
 };
+const DTM_KEY_ID = /^[A-Za-z0-9._-]{1,64}$/;
+function dtmConnector(
+  env: Env,
+  c: Common,
+  problems: string[],
+): DtmConnectorConfig {
+  const raw = env.DTM_BASE_URL ?? "";
+  let baseUrl = "";
+  try {
+    const url = new URL(raw);
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && local))
+      problems.push("DTM_BASE_URL must be https (http only for localhost)");
+    if (c.secure && url.protocol !== "https:")
+      problems.push("DTM_BASE_URL must be https in secure profiles");
+    if (
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password
+    )
+      problems.push(
+        "DTM_BASE_URL must be an origin (scheme://host[:port]) without path, query or credentials",
+      );
+    baseUrl = url.origin;
+  } catch {
+    problems.push("DTM_BASE_URL is required and must be a URL");
+  }
+  const keyId = env.DTM_KEY_ID ?? "";
+  if (!DTM_KEY_ID.test(keyId))
+    problems.push(
+      "DTM_KEY_ID is required (letters, digits, dot, dash, underscore; up to 64)",
+    );
+  const secret = env.DTM_SECRET ?? "";
+  if (secret.length < 32)
+    problems.push("DTM_SECRET is required and must be at least 32 characters");
+  // Below the 30-second dispatch lease, so a slow call cannot outlive it.
+  const timeoutMs = positiveInt(
+    env,
+    "DTM_TIMEOUT_MS",
+    10_000,
+    20_000,
+    problems,
+  );
+  if (timeoutMs < 1_000) problems.push("DTM_TIMEOUT_MS must be at least 1000");
+  return { baseUrl, keyId, secret, timeoutMs };
+}
 export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
   const problems: string[] = [];
   const c = common(env, problems);
@@ -371,15 +433,27 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     problems,
   );
   const kindRaw = env.CONNECTOR_KIND ?? "mock";
-  if (kindRaw !== "mock" && kindRaw !== "none")
-    problems.push(
-      "CONNECTOR_KIND must be mock or none (no qualified real connector exists yet)",
-    );
-  const kind = kindRaw === "none" ? "none" : "mock";
+  if (kindRaw !== "mock" && kindRaw !== "none" && kindRaw !== "dtm")
+    problems.push("CONNECTOR_KIND must be mock, none or dtm");
+  const kind: ConnectorKind =
+    kindRaw === "none" || kindRaw === "dtm" ? kindRaw : "mock";
   if (kind === "mock" && c.dataMode === "REAL")
     problems.push(
       "REAL data mode refuses the mock connector; use CONNECTOR_KIND=none with the manual destination workflow",
     );
+  // Lifted only by a code change that records the qualification evidence
+  // (docs/connector-qualification.md).
+  if (kind === "dtm" && c.dataMode === "REAL")
+    problems.push(
+      "REAL data mode refuses the dtm connector until it is qualified against a DTM staging copy; use CONNECTOR_KIND=none",
+    );
+  const dtm = kind === "dtm" ? dtmConnector(env, c, problems) : undefined;
+  if (
+    kind === "dtm" &&
+    env.CONNECTOR_FAULT_MODE &&
+    env.CONNECTOR_FAULT_MODE !== "success"
+  )
+    problems.push("CONNECTOR_FAULT_MODE applies only to the mock connector");
   const requested = (
     env.CONNECTOR_CAPABILITIES || CONNECTOR_IMPLEMENTED[kind].join(",")
   )
@@ -407,6 +481,7 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
       kind,
       capabilities,
       faultMode: env.CONNECTOR_FAULT_MODE ?? "success",
+      ...(dtm ? { dtm } : {}),
     },
     dispatchMaxAttempts: Math.max(
       1,

@@ -242,3 +242,86 @@ describe("worker startup configuration", () => {
       ).join(),
     ).toMatch(/must not be configured/));
 });
+
+describe("worker DTM connector configuration", () => {
+  const stagingDtm = {
+    NODE_ENV: "production",
+    ACCESS_DEPLOYMENT_PROFILE: "synthetic-staging",
+    ACCESS_DATA_MODE: "SYNTHETIC",
+    WORKER_DATABASE_URL:
+      "postgres://access_worker.projectref:secret@db.example.test:5432/postgres",
+    DATABASE_SSL: "require",
+    CONNECTOR_KIND: "dtm",
+    DTM_BASE_URL: "https://dtm-staging.example.test",
+    DTM_KEY_ID: "2026-10",
+    DTM_SECRET: "staging-placeholder-secret-0123456789",
+  };
+  it("synthetic staging delivers referrals to DTM with delivery and read-back only", () => {
+    const config = loadWorkerConfig(stagingDtm);
+    expect(config.connector).toEqual({
+      kind: "dtm",
+      capabilities: ["referral.create", "referral.status.read"],
+      faultMode: "success",
+      dtm: {
+        baseUrl: "https://dtm-staging.example.test",
+        keyId: "2026-10",
+        secret: stagingDtm.DTM_SECRET,
+        timeoutMs: 10_000,
+      },
+    });
+  });
+  it("refuses REAL data until the DTM connector is qualified", () =>
+    expect(
+      problems(() =>
+        loadWorkerConfig({
+          ...stagingDtm,
+          ACCESS_DEPLOYMENT_PROFILE: "client-pilot",
+          ACCESS_DATA_MODE: "REAL",
+        }),
+      ).join(),
+    ).toMatch(/refuses the dtm connector until it is qualified/));
+  it("fails closed on a missing or unsafe address, key or secret", () => {
+    const found = (env: Record<string, string | undefined>) =>
+      problems(() => loadWorkerConfig({ ...stagingDtm, ...env })).join("\n");
+    expect(found({ DTM_BASE_URL: undefined })).toMatch(
+      /DTM_BASE_URL is required/,
+    );
+    expect(found({ DTM_BASE_URL: "http://dtm.example.test" })).toMatch(
+      /must be https/,
+    );
+    expect(found({ DTM_BASE_URL: "https://dtm.example.test/app" })).toMatch(
+      /must be an origin/,
+    );
+    expect(found({ DTM_BASE_URL: "https://user:pw@dtm.example.test" })).toMatch(
+      /must be an origin/,
+    );
+    expect(found({ DTM_KEY_ID: "key with spaces" })).toMatch(/DTM_KEY_ID/);
+    expect(found({ DTM_SECRET: "too-short" })).toMatch(/at least 32/);
+    expect(found({ DTM_TIMEOUT_MS: "60000" })).toMatch(/DTM_TIMEOUT_MS/);
+    expect(found({ DTM_TIMEOUT_MS: "500" })).toMatch(/at least 1000/);
+    expect(found({ CONNECTOR_CAPABILITIES: "appointment.create" })).toMatch(
+      /not implemented by connector dtm/,
+    );
+    expect(found({ CONNECTOR_FAULT_MODE: "committed-timeout" })).toMatch(
+      /only to the mock connector/,
+    );
+  });
+  it("local development may use http on localhost only", () => {
+    const local = {
+      NODE_ENV: "development",
+      WORKER_DATABASE_URL: "postgres://access_worker:x@localhost/access",
+      CONNECTOR_KIND: "dtm",
+      DTM_KEY_ID: "local",
+      DTM_SECRET: "local-placeholder-secret-0123456789ab",
+    };
+    expect(
+      loadWorkerConfig({ ...local, DTM_BASE_URL: "http://localhost:3000/" })
+        .connector.dtm?.baseUrl,
+    ).toBe("http://localhost:3000");
+    expect(
+      problems(() =>
+        loadWorkerConfig({ ...local, DTM_BASE_URL: "http://10.0.0.5:3000" }),
+      ).join(),
+    ).toMatch(/http only for localhost/);
+  });
+});
