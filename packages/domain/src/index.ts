@@ -10,6 +10,11 @@ import {
 } from "@access/contracts";
 export type { CaseState } from "@access/contracts";
 
+/** Patient-safe display reference derived from the opaque case id. */
+export function displayRef(caseId: string): string {
+  return `REF-${caseId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+}
+
 /**
  * ACCESS case lifecycle. This is business state only: connector execution
  * status (PENDING, LEASED, AMBIGUOUS, RECONCILING ...) lives on executions and

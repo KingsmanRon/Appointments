@@ -353,6 +353,22 @@ function documentsOf(facts: ReferralFacts): string[] {
 }
 
 /**
+ * A fact as the evaluator reads it: what staff supplied wins over the
+ * extraction. A connector that delivers the referral reads through this, so
+ * the destination receives exactly the facts that made the referral ready.
+ */
+export function referralField(
+  facts: ReferralFacts,
+  path: RuleFieldPath,
+): string | undefined {
+  return readField(facts, path);
+}
+/** Documents on file: extracted and staff-supplied, sorted. */
+export function referralDocuments(facts: ReferralFacts): DocumentType[] {
+  return documentsOf(facts) as DocumentType[];
+}
+
+/**
  * Deterministic administrative evaluation. Given the same rule set and the
  * same facts it always returns a byte-identical decision (decision_hash).
  */

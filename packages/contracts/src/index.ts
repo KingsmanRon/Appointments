@@ -541,6 +541,45 @@ export const referralStatusSchema = z
   .strict();
 export type ReferralStatus = z.infer<typeof referralStatusSchema>;
 
+/**
+ * The referral a `referral.create` connector delivers: the facts that made
+ * it ready, as the rules read them. The worker builds it at dispatch and
+ * holds it in memory only; it is never stored in the outbox. Documents stay
+ * with ACCESS: `documents_held` names them, nothing more.
+ */
+export const referralDeliverySchema = z
+  .object({
+    schema_version: z.literal("referral-delivery.v1"),
+    case_reference: z.string().regex(/^REF-[0-9A-F]{8}$/),
+    referral_id: uuid,
+    received_at: z.iso.datetime({ offset: true }),
+    patient: z
+      .object({
+        given_name: z.string().min(1).max(200),
+        family_name: z.string().min(1).max(200),
+        date_of_birth: z.iso.date(),
+        identifier: z.string().min(1).max(100).optional(),
+      })
+      .strict(),
+    referrer: z.object({ name: z.string().min(1).max(200) }).strict(),
+    reason: z.string().max(4000).optional(),
+    requested_service: z
+      .string()
+      .regex(/^[A-Z0-9_]{2,64}$/)
+      .optional(),
+    referral_date: z.iso.date().optional(),
+    funding: z
+      .object({
+        type: z.enum(FUNDING_TYPES),
+        scheme: z.string().min(1).max(120).optional(),
+      })
+      .strict()
+      .optional(),
+    documents_held: z.array(z.enum(DOCUMENT_TYPES)),
+  })
+  .strict();
+export type ReferralDelivery = z.infer<typeof referralDeliverySchema>;
+
 export const appointmentOutcomeSchema = z
   .object({
     schema_version: z.literal("appointment-outcome.v1"),
