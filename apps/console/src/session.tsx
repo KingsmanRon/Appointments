@@ -30,7 +30,12 @@ export function supabaseClient(): SupabaseClient {
 export interface Me {
   user_id: string;
   tenant_id: string;
-  role: "ADMIN" | "PRACTICE_MANAGER" | "REFERRAL_COORDINATOR" | "READ_ONLY";
+  role:
+    | "ADMIN"
+    | "PRACTICE_MANAGER"
+    | "REFERRAL_COORDINATOR"
+    | "READ_ONLY"
+    | "PRACTITIONER";
   auth_mode: "jwt" | "synthetic";
   profile: string;
   data_mode: string;

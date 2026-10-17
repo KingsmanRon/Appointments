@@ -35,14 +35,14 @@ jobs:
       - name: Unit tests (lifecycle, booking sub-flow, rules, policy, config, storage, scanner, logging, migrations, connector and destination faults, DTM signing and delivery)
         run: npx vitest run --project unit --reporter=verbose --reporter=json --outputFile.json=unit-report.json
       - name: Assert unit suite ran without skips
-        run: node scripts/assert-test-report.mjs unit-report.json 132
-      - name: PostgreSQL integration (migrations, RLS, dispatcher, ambiguity, poison, idempotency, outcomes, metrics, rules, artifacts, auth/tenancy, acceptance 1-29, E2E flows A-I, appointment scenarios A-S, appointment security, DTM delivery)
+        run: node scripts/assert-test-report.mjs unit-report.json 138
+      - name: PostgreSQL integration (migrations, RLS, dispatcher, ambiguity, poison, idempotency, outcomes, metrics, rules, artifacts, auth/tenancy, acceptance 1-29, E2E flows A-I, appointment scenarios A-S, appointment security, DTM delivery, native scheduling and concurrency)
         env:
           QUALIFICATION_REPORT: qualification-report.json
           APPOINTMENT_QUALIFICATION_REPORT: appointment-qualification-report.json
         run: npx vitest run --project integration --reporter=verbose --reporter=json --outputFile.json=integration-report.json
       - name: Assert integration suites ran without skips
-        run: node scripts/assert-test-report.mjs integration-report.json 123
+        run: node scripts/assert-test-report.mjs integration-report.json 146
       - name: Build
         run: npm run build
       - name: Install Bicep
@@ -66,6 +66,31 @@ jobs:
             integration-report.json
             qualification-report.json
             appointment-qualification-report.json
+  browser:
+    # Reception and practitioner calendar in Chromium against the real API,
+    # console and PostgreSQL. Synthetic data only.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.4
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BROWSER_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/access_browser_test"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Build (packages resolve to their build output)
+        run: npm run build
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Browser acceptance (booking, double booking, move, cancel, referral, role-restricted calendar)
+        run: npm run test:browser
+      - name: Assert browser suite ran without skips
+        run: node -e "const r=require('./browser-report.json');const s=r.stats;console.log(JSON.stringify(s));if(s.unexpected||s.flaky||s.skipped||s.expected<5)process.exit(1)"
   image:
     runs-on: ubuntu-latest
     steps:

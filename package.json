@@ -15,6 +15,7 @@
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:fault": "vitest run tests/fault",
+    "test:browser": "playwright test",
     "qualify:synthetic": "vitest run --project integration tests/e2e/qualification.test.ts",
     "qualify:appointments": "vitest run --project integration tests/e2e/appointments.test.ts",
     "build": "npm run build --workspaces --if-present",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@playwright/test": "1.56.1",
     "@types/node": "^20.19.17",
     "concurrently": "^9.2.1",
     "eslint": "^9.36.0",

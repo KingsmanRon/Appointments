@@ -55,7 +55,14 @@ export function Login() {
               <option>PRACTICE_MANAGER</option>
               <option>ADMIN</option>
               <option>READ_ONLY</option>
+              <option>PRACTITIONER</option>
             </select>
+            {role === "PRACTITIONER" && (
+              <span className="field-hint">
+                A doctor sees only their own calendar. Synthetic Dr M signs in
+                as dr-m.
+              </span>
+            )}
           </div>
           <div className="field">
             <label htmlFor="synthetic-user">Staff name (synthetic)</label>

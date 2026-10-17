@@ -13,22 +13,31 @@ import "./styles/booking.css";
 import "./styles/dashboard.css";
 import "./styles/intake.css";
 import "./styles/rules.css";
-import { Shell, type NavKey } from "./layout/Shell";
+import "./styles/schedule.css";
+import { allowedPages, Shell, type NavKey } from "./layout/Shell";
 import { SessionProvider, useSession } from "./session";
 import { CaseDetail } from "./views/CaseDetail";
 import { Dashboard } from "./views/Dashboard";
 import { Login } from "./views/Login";
 import { NewReferral } from "./views/NewReferral";
 import { Queue } from "./views/Queue";
+import { Reception } from "./views/Reception";
 import { Rules } from "./views/Rules";
+import { ScheduleCalendar } from "./views/ScheduleCalendar";
 
 type Route =
-  | { page: "queue" | "dashboard" | "new" | "rules" }
+  | { page: "queue" | "dashboard" | "new" | "book" | "calendar" | "rules" }
   | { page: "case"; id: string };
 function parse(hash: string): Route {
   const [page, id] = hash.replace(/^#\/?/, "").split("/");
   if (page === "case" && id) return { page: "case", id };
-  if (page === "dashboard" || page === "new" || page === "rules")
+  if (
+    page === "dashboard" ||
+    page === "new" ||
+    page === "book" ||
+    page === "calendar" ||
+    page === "rules"
+  )
     return { page };
   return { page: "queue" };
 }
@@ -36,6 +45,8 @@ const TITLES: Record<Route["page"], string> = {
   queue: "Queue",
   dashboard: "Dashboard",
   new: "New referral",
+  book: "Reception",
+  calendar: "Calendar",
   rules: "Rules",
   case: "Case",
 };
@@ -75,7 +86,16 @@ function App() {
     location.hash = hash;
   };
   if (!session.me) return <Login />;
-  const active: NavKey = route.page === "case" ? "queue" : route.page;
+  // A page the role cannot use falls back to the role's first page (a
+  // doctor lands on their calendar); the API refuses it regardless.
+  const pages = allowedPages(session.me.role);
+  const wanted: NavKey = route.page === "case" ? "queue" : route.page;
+  if (!pages.includes(wanted)) {
+    const home = pages[0]!;
+    if (route.page !== home) queueMicrotask(() => go(`#/${home}`));
+    return null;
+  }
+  const active: NavKey = wanted;
   const key = route.page === "case" ? `case-${route.id}` : route.page;
   return (
     <Shell active={active}>
@@ -92,6 +112,8 @@ function App() {
         {route.page === "new" && (
           <NewReferral open={(id) => go(`#/case/${id}`)} />
         )}
+        {route.page === "book" && <Reception />}
+        {route.page === "calendar" && <ScheduleCalendar />}
         {route.page === "rules" && <Rules />}
       </div>
     </Shell>

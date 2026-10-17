@@ -20,6 +20,8 @@ const PATHS = {
   info: "M10 16a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM10 9.3v3.9M10 6.9v.1",
   lock: "M6 9h8v7H6zM7.5 9V7a2.5 2.5 0 0 1 5 0v2",
   arrowRight: "M4.5 10h11M11.5 6l4 4-4 4",
+  calendar: "M4 5.5h12v10.5H4zM4 8.5h12M7.5 3.5v3M12.5 3.5v3",
+  book: "M4 5.5h12v10.5H4zM4 8.5h12M7.5 3.5v3M12.5 3.5v3M10 10.5v4M8 12.5h4",
 } as const;
 export type IconName = keyof typeof PATHS;
 
