@@ -28,6 +28,13 @@ export interface CapabilityDescriptor {
   capability: Capability;
   /** The destination de-duplicates on execution_id, so re-send is safe. */
   idempotentByExecutionId: boolean;
+  /**
+   * `referral.create` only: the connector sends the referral's content, so
+   * the dispatcher attaches a `referral-delivery.v1` (payload.delivery)
+   * built from the facts that made it ready. Connectors without it never
+   * receive patient details.
+   */
+  sendsReferralContent?: boolean;
 }
 export interface Connector {
   readonly name: string;

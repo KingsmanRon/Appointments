@@ -50,6 +50,10 @@ A person decides.
 ## Residual risks and open items (before production)
 
 - No real PMS connector is qualified; the pilot uses manual destination entry.
+  The DTM connector delivers referrals in synthetic mode only until it is
+  qualified ([DTM connector](connectors/dtm.md)). Its signing secret
+  (`DTM_SECRET`) is worker-only, and the delivery it sends is built in memory
+  and never stored or logged.
 - No key-rotation procedure for `ARTIFACT_ENCRYPTION_KEY` is automated
   (the `encryption_key_id` column supports it; a re-encryption job is future).
 - Retention: `retention_until` is recorded; the purge job is not implemented,

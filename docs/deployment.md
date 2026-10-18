@@ -97,6 +97,13 @@ once read back), plus `appointment.hold`, `appointment.reschedule` and
 `CONNECTOR_KIND=none` every booking step fails closed into a staff exception,
 and booking stays manual (`record_booking`).
 
+**DTM referral delivery (synthetic staging only):** set `CONNECTOR_KIND=dtm`,
+`DTM_BASE_URL` (DTM's origin, https), `DTM_KEY_ID` and `DTM_SECRET` on the worker,
+and the matching `ACCESS_INTEGRATION_*` variables on DTM
+([DTM connector](connectors/dtm.md)). No migration. The worker refuses
+`dtm` with `ACCESS_DATA_MODE=REAL`, so the Azure template does not carry the
+DTM variables yet; they are added with the qualification change.
+
 ## Local
 
 `docker compose up --build` (profile `local`, synthetic everything).

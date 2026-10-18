@@ -1,6 +1,7 @@
 # Railway is supported for synthetic-staging only. Required variables:
 # ACCESS_DEPLOYMENT_PROFILE=synthetic-staging, WORKER_DATABASE_URL (access_worker),
-# DATABASE_SSL=require, DATABASE_CA_CERT, CONNECTOR_KIND=mock, and the
+# DATABASE_SSL=require, DATABASE_CA_CERT, CONNECTOR_KIND=mock (or dtm with
+# DTM_BASE_URL, DTM_KEY_ID and DTM_SECRET: docs/connectors/dtm.md), and the
 # DISPATCH_*/RECONCILE_* values. Never MIGRATION_DATABASE_URL.
 [build]
 builder = "DOCKERFILE"

@@ -381,5 +381,6 @@ connector refuses REAL data.
   a confirmation is always a staff attestation.
 - Rebooking a referral after its appointment is cancelled (the cancellation is
   raised for manager review; a new referral is needed in v1).
-- Real PMS connectors: `CONNECTOR_KIND` is `mock` or `none`; the mock refuses
-  REAL data.
+- Real PMS connectors: `CONNECTOR_KIND` is `mock`, `none` or `dtm`. The DTM
+  connector delivers referrals only (DTM has no appointment book). Both
+  `mock` and `dtm` refuse REAL data.

@@ -22,15 +22,11 @@ import {
 import {
   appointmentNextAction,
   availabilityIsFresh,
+  displayRef,
   nextRequiredAction,
   workflowFinished,
 } from "@access/domain";
 import { can } from "@access/policy";
-
-/** Patient-safe display reference derived from the opaque case id. */
-export function displayRef(caseId: string): string {
-  return `REF-${caseId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
-}
 
 const FILTERS: Record<QueueFilter, string> = {
   all: "TRUE",

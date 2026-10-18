@@ -8,6 +8,7 @@ import {
   type ConnectorResult,
   type ObservationType,
   type Operation,
+  type ReferralDelivery,
   type Subject,
   type WorkItemKind,
 } from "@access/contracts";
@@ -40,6 +41,7 @@ import {
   type CapabilityGate,
   type Connector,
 } from "./connector.js";
+import { loadReferralDelivery } from "./referral-delivery.js";
 
 export interface DispatcherOptions {
   maxDispatch: number;
@@ -258,9 +260,32 @@ export class Dispatcher {
       }
       prepared = step.request;
     }
+    // A connector that sends the referral's content gets it now, built in
+    // memory from the facts that made it ready. Nothing partial is sent.
+    let delivery: ReferralDelivery | undefined;
+    if (
+      item.operation === "referral.create" &&
+      this.gate.descriptor(decision.capability)?.sendsReferralContent
+    ) {
+      const built = await this.tx(tenantId, (c) =>
+        loadReferralDelivery(c, tenantId, item.case_id),
+      );
+      if (!built) {
+        await this.settle(item, {
+          kind: "failed",
+          code: "REFERRAL_DELIVERY_INCOMPLETE",
+          workKind: "MANUAL_DESTINATION",
+        });
+        return true;
+      }
+      delivery = built;
+    }
     let outcome: Outcome;
     try {
-      const request = prepared ?? this.request(item);
+      const base = prepared ?? this.request(item);
+      const request = delivery
+        ? { ...base, payload: { ...base.payload, delivery } }
+        : base;
       outcome = this.interpret(
         request,
         await this.connector.execute(request),

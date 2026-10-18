@@ -14,6 +14,7 @@ import {
   type FaultMode,
 } from "./connector.js";
 import { Dispatcher } from "./dispatcher.js";
+import { DtmConnector } from "./dtm-connector.js";
 
 let config: WorkerConfig;
 try {
@@ -43,7 +44,12 @@ const connector: Connector =
         appointmentOutcome: (process.env.MOCK_APPOINTMENT_OUTCOME ??
           "NONE") as never,
       })
-    : new NoConnector();
+    : config.connector.kind === "dtm" && config.connector.dtm
+      ? new DtmConnector({
+          ...config.connector.dtm,
+          dataMode: config.dataMode,
+        })
+      : new NoConnector();
 const gate = new CapabilityGate(connector, config.connector.capabilities);
 const dispatcher = new Dispatcher(pool, connector, gate, {
   maxDispatch: config.dispatchMaxAttempts,
