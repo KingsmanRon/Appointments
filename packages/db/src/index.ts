@@ -7,3 +7,4 @@ export * from "./rules.js";
 export * from "./metrics.js";
 export * from "./migrations.js";
 export * from "./seed-lib.js";
+export * from "./retention.js";
