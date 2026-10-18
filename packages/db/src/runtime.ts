@@ -25,9 +25,11 @@ export interface PoolOptions {
   caCert?: string | undefined;
   max?: number | undefined;
   applicationName?: string | undefined;
+  /** Told when the server drops an idle connection (restart, failover). */
+  onIdleError?: ((error: Error) => void) | undefined;
 }
 export function createPool(options: PoolOptions): pg.Pool {
-  return new pg.Pool({
+  const pool = new pg.Pool({
     connectionString: options.connectionString,
     max: options.max ?? 10,
     application_name: options.applicationName ?? "access",
@@ -43,6 +45,11 @@ export function createPool(options: PoolOptions): pg.Pool {
           }
         : undefined,
   });
+  // Without a listener, an idle client's error (the server restarting or
+  // failing over) is an unhandled 'error' event and ends the process. The
+  // pool has already discarded that client; the next query reconnects.
+  pool.on("error", (error) => options.onIdleError?.(error));
+  return pool;
 }
 export type DbClient = pg.PoolClient;
 

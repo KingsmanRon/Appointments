@@ -1,6 +1,6 @@
 import { ConfigError, loadApiConfig, type ApiConfig } from "@access/config";
 import { createPool, verifyRuntimeIdentity } from "@access/db";
-import { log } from "@access/observability";
+import { errorFields, log } from "@access/observability";
 import { buildApp } from "./app.js";
 import { JwtAuthenticator, SyntheticAuthenticator } from "./auth.js";
 import { IntakeExtractor } from "./extraction.js";
@@ -33,6 +33,7 @@ const pool = createPool({
   caCertPath: config.databaseCaCertPath,
   caCert: config.databaseCaCert,
   applicationName: "access-api",
+  onIdleError: (e) => log("warn", "database connection lost", errorFields(e)),
 });
 if (config.profile !== "local")
   await verifyRuntimeIdentity(pool, "access_request");
