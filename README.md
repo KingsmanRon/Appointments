@@ -37,6 +37,7 @@ that looks urgent or clinical is routed to a human safety workflow.
 | Staff console: queue, case detail, actions, booking stage, dashboard, rules           | yes                   | yes                                            | needs usability/accessibility review |
 | Email / WhatsApp / voice / patient portal channels                                    | defined, disabled     | no                                             | future                               |
 | Appointment operations ([design](docs/appointment-operations-v1.md))                  | mock destination only | **no** (no real PMS connector; manual booking) | no                                   |
+| Native scheduling ([design](docs/native-scheduling.md))                               | yes                   | not yet (synthetic until the checklist)        | needs pilot sign-off                 |
 
 "Client-pilot ready" still requires every gate in
 [docs/client-pilot-checklist.md](docs/client-pilot-checklist.md) before any
@@ -70,6 +71,7 @@ Read next: [ADR 0002 — case aggregate](docs/adr/0002-access-case-aggregate.md)
 [runbooks](docs/runbooks.md), [rules guide](docs/rules-guide.md),
 [connector qualification](docs/connector-qualification.md),
 [DTM connector](docs/connectors/dtm.md),
+[native scheduling](docs/native-scheduling.md),
 [synthetic qualification](docs/qualification.md),
 [appointment operations v1](docs/appointment-operations-v1.md).
 

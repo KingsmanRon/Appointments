@@ -104,6 +104,12 @@ and the matching `ACCESS_INTEGRATION_*` variables on DTM
 `dtm` with `ACCESS_DATA_MODE=REAL`, so the Azure template does not carry the
 DTM variables yet; they are added with the qualification change.
 
+**Native scheduling (0007):** run the migration before deploying the new API
+and console. No new variable or secret. Add each practitioner (`POST
+/v1/schedule/practitioners`, manager) with `linked_actor_id`
+`user:<Supabase user id>` and give that user a `PRACTITIONER` membership; then
+set working hours. Synthetic seeding adds Dr M (`synthetic:dr-m`).
+
 ## Local
 
 `docker compose up --build` (profile `local`, synthetic everything).

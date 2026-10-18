@@ -208,8 +208,17 @@ export const STAFF_ROLES = [
   "PRACTICE_MANAGER",
   "REFERRAL_COORDINATOR",
   "READ_ONLY",
+  /** A doctor: reads their own calendar only, never the referral queue. */
+  "PRACTITIONER",
 ] as const;
 export type StaffRole = (typeof STAFF_ROLES)[number];
+/** Roles that own referral work items; a practitioner owns none. */
+export const WORKFLOW_ROLES = [
+  "ADMIN",
+  "PRACTICE_MANAGER",
+  "REFERRAL_COORDINATOR",
+  "READ_ONLY",
+] as const satisfies readonly StaffRole[];
 
 export const DOCUMENT_TYPES = [
   "referral_letter",
@@ -355,6 +364,12 @@ export const COMMAND_TYPES = [
   "appointment.action",
   /** Confirmation, reschedule or cancellation of a committed appointment. */
   "appointment.change",
+  /** Native scheduling: practitioners, working hours and blocked periods. */
+  "schedule.configure",
+  /** Native scheduling: reception books an appointment. */
+  "schedule.book",
+  /** Native scheduling: reschedule, cancel, check-in, completion, no-show. */
+  "schedule.change",
 ] as const;
 export type CommandType = (typeof COMMAND_TYPES)[number];
 
@@ -1305,3 +1320,5 @@ export function canonicalJson(value: unknown): string {
     .map((k) => `${JSON.stringify(k)}:${canonicalJson(object[k])}`)
     .join(",")}}`;
 }
+
+export * from "./scheduling.js";

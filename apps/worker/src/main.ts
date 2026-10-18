@@ -31,6 +31,7 @@ const pool = createPool({
   caCertPath: config.databaseCaCertPath,
   caCert: config.databaseCaCert,
   applicationName: "access-worker",
+  onIdleError: (e) => log("warn", "database connection lost", errorFields(e)),
 });
 if (config.profile !== "local")
   await verifyRuntimeIdentity(pool, "access_worker");

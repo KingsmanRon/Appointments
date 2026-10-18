@@ -26,7 +26,21 @@ export type Permission =
   | "appointment.book"
   | "appointment.confirm"
   | "appointment.reschedule"
-  | "appointment.cancel";
+  | "appointment.cancel"
+  // Native scheduling (ACCESS's own appointment book).
+  /** See practitioners, availability and any practitioner's calendar. */
+  | "schedule.read"
+  /** See only the calendar of the practitioner linked to this actor. */
+  | "schedule.read_own"
+  | "schedule.read_patient_details"
+  /** Reception: book telephone, walk-in and referral appointments. */
+  | "schedule.book"
+  /** Reception: reschedule, cancel, check in, record a no-show. */
+  | "schedule.change"
+  /** Mark a checked-in appointment completed. */
+  | "schedule.complete"
+  /** Practitioners, working hours and blocked periods. */
+  | "schedule.configure";
 
 const coordinator: readonly Permission[] = [
   "case.read",
@@ -49,6 +63,13 @@ const coordinator: readonly Permission[] = [
   "appointment.confirm",
   "metrics.read",
   "rule_set.read",
+  // Reception runs the practice's own appointment book: telephone, walk-in
+  // and referral bookings, and the day's changes.
+  "schedule.read",
+  "schedule.read_patient_details",
+  "schedule.book",
+  "schedule.change",
+  "schedule.complete",
 ];
 /**
  * Rescheduling and cancellation remove a committed appointment from the
@@ -60,15 +81,27 @@ const manager: readonly Permission[] = [
   "observation.import",
   "appointment.reschedule",
   "appointment.cancel",
+  "schedule.configure",
 ];
 const matrix: Record<StaffRole, readonly Permission[]> = {
-  READ_ONLY: ["case.read", "metrics.read", "rule_set.read"],
+  // Read-only staff see the calendar's shape, not who is booked.
+  READ_ONLY: ["case.read", "metrics.read", "rule_set.read", "schedule.read"],
+  // A doctor sees their own calendar with the details needed to see the
+  // patient, and completes their own consultations. No referral queue, no
+  // booking, no other practitioner.
+  PRACTITIONER: [
+    "schedule.read_own",
+    "schedule.read_patient_details",
+    "schedule.complete",
+  ],
   REFERRAL_COORDINATOR: coordinator,
   PRACTICE_MANAGER: manager,
   ADMIN: [...manager, "rule_set.write", "membership.manage"],
 };
 export function can(role: StaffRole, permission: Permission): boolean {
-  return matrix[role].includes(permission);
+  // An unknown role (e.g. a membership written by a newer release) gets
+  // nothing rather than an error.
+  return matrix[role]?.includes(permission) ?? false;
 }
 export class ForbiddenError extends Error {
   readonly statusCode = 403;

@@ -25,6 +25,7 @@ describe("migration discovery", () => {
       "0004_interactions_outcomes_rules",
       "0005_workforce_identity_and_privileges",
       "0006_appointment_operations",
+      "0007_native_scheduling",
     ]);
     for (const f of files) expect(f.checksum).toMatch(/^[0-9a-f]{64}$/);
   });

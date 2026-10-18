@@ -33,6 +33,43 @@ describe("workforce authorisation", () => {
     for (const role of STAFF_ROLES)
       expect(can(role, "membership.manage")).toBe(role === "ADMIN");
   });
+  it("native scheduling: reception books and changes, managers configure, a practitioner only reads their own calendar", () => {
+    const perms = [
+      "schedule.read",
+      "schedule.read_own",
+      "schedule.read_patient_details",
+      "schedule.book",
+      "schedule.change",
+      "schedule.complete",
+      "schedule.configure",
+    ] as const;
+    const grid = Object.fromEntries(
+      STAFF_ROLES.map((role) => [role, perms.filter((p) => can(role, p))]),
+    );
+    const reception = [
+      "schedule.read",
+      "schedule.read_patient_details",
+      "schedule.book",
+      "schedule.change",
+      "schedule.complete",
+    ];
+    expect(grid).toEqual({
+      ADMIN: [...reception, "schedule.configure"],
+      PRACTICE_MANAGER: [...reception, "schedule.configure"],
+      REFERRAL_COORDINATOR: reception,
+      READ_ONLY: ["schedule.read"],
+      PRACTITIONER: [
+        "schedule.read_own",
+        "schedule.read_patient_details",
+        "schedule.complete",
+      ],
+    });
+    // A role this release does not know gets nothing, rather than an error.
+    expect(can("SOMETHING_NEW" as never, "schedule.read")).toBe(false);
+    // A practitioner never reaches the referral queue or any case action.
+    expect(can("PRACTITIONER", "case.read")).toBe(false);
+    expect(can("PRACTITIONER", "referral.ingest")).toBe(false);
+  });
   it("coordinators book and confirm; only managers and admins reschedule or cancel", () => {
     const grid = Object.fromEntries(
       STAFF_ROLES.map((role) => [
@@ -68,6 +105,7 @@ describe("workforce authorisation", () => {
         "appointment.book",
         "appointment.confirm",
       ],
+      PRACTITIONER: [],
       READ_ONLY: [],
     });
     expect(appointmentPermission("APPOINTMENT_REQUEST")).toBe(

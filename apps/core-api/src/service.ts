@@ -111,10 +111,11 @@ interface ReferralRow {
 }
 type Ctx = { tenantId: string; correlationId: string; actor: ActorRef };
 
-function requestContext(auth: AuthContext) {
+export function requestContext(auth: AuthContext) {
   return {
     userId: auth.mode === "jwt" ? auth.userId : undefined,
     actorRole: auth.role,
+    actorId: auth.actor.id,
   };
 }
 function assertChannel(channel: Channel) {

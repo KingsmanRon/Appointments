@@ -7,6 +7,8 @@ import {
   type ObservationDisposition,
   type ObservationType,
   type ResolutionCode,
+  type ScheduleChangeName,
+  type ScheduleStatus,
 } from "@access/contracts";
 export type { CaseState } from "@access/contracts";
 
@@ -652,3 +654,81 @@ export const LEGACY_STATE_MAP: Record<string, CaseState> = {
   EXCEPTION: "EXCEPTION",
   REJECTED: "REJECTED",
 };
+
+// ---------------------------------------------------------------------------
+// Native scheduling (migration 0007). Mirrors the database guard
+// scheduled_appointment_transition_allowed; the database has the last word.
+// ---------------------------------------------------------------------------
+
+export const SCHEDULE_TRANSITIONS: Readonly<
+  Record<ScheduleStatus, readonly ScheduleStatus[]>
+> = {
+  BOOKED: ["CHECKED_IN", "CANCELLED", "NO_SHOW", "RESCHEDULED"],
+  CHECKED_IN: ["COMPLETED", "CANCELLED"],
+  // A late arrival: re-occupies the time, so it fails if that was rebooked.
+  NO_SHOW: ["CHECKED_IN"],
+  COMPLETED: [],
+  CANCELLED: [],
+  RESCHEDULED: [],
+};
+export function canScheduleTransition(
+  from: ScheduleStatus,
+  to: ScheduleStatus,
+): boolean {
+  return SCHEDULE_TRANSITIONS[from].includes(to);
+}
+/** The status a staff change leads to. */
+export function scheduleChangeTarget(
+  action: ScheduleChangeName,
+): ScheduleStatus {
+  switch (action) {
+    case "reschedule":
+      return "RESCHEDULED";
+    case "cancel":
+      return "CANCELLED";
+    case "check_in":
+      return "CHECKED_IN";
+    case "complete":
+      return "COMPLETED";
+    case "no_show":
+      return "NO_SHOW";
+  }
+}
+
+/** "08:30" -> 510; "24:00" -> 1440. */
+export function clockMinutes(value: string): number {
+  const [h, m] = value.split(":").map(Number);
+  return h! * 60 + m!;
+}
+export interface WorkingSession {
+  weekday: number;
+  start_minute: number;
+  end_minute: number;
+}
+/**
+ * Validate a weekly template: each session ends after it starts and no two
+ * sessions on one day overlap. The database enforces the same with an
+ * exclusion constraint; this gives reception a readable refusal first.
+ */
+export function workingSessions(
+  input: readonly { weekday: number; start: string; end: string }[],
+): { ok: true; sessions: WorkingSession[] } | { ok: false; problem: string } {
+  const sessions = input
+    .map((s) => ({
+      weekday: s.weekday,
+      start_minute: clockMinutes(s.start),
+      end_minute: clockMinutes(s.end),
+    }))
+    .sort((a, b) => a.weekday - b.weekday || a.start_minute - b.start_minute);
+  for (const [i, s] of sessions.entries()) {
+    if (s.start_minute >= 1440 || s.end_minute <= s.start_minute)
+      return {
+        ok: false,
+        problem: `session ${i + 1} must end after it starts`,
+      };
+    const prev = sessions[i - 1];
+    if (prev && prev.weekday === s.weekday && s.start_minute < prev.end_minute)
+      return { ok: false, problem: `sessions overlap on weekday ${s.weekday}` };
+  }
+  return { ok: true, sessions };
+}

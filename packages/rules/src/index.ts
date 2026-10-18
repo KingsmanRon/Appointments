@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   CASE_STATES,
   DOCUMENT_TYPES,
-  STAFF_ROLES,
+  WORKFLOW_ROLES,
   TERMINAL_CASE_STATES,
   WORK_ITEM_KINDS,
   canonicalJson,
@@ -38,7 +38,7 @@ const code = z.string().regex(/^[A-Z0-9_]{2,64}$/);
 const token = z.string().regex(/^[A-Za-z0-9_.:-]{1,80}$/);
 const label = z.string().trim().min(1).max(200);
 const docs = z.array(z.enum(DOCUMENT_TYPES)).max(10);
-const role = z.enum(STAFF_ROLES);
+const role = z.enum(WORKFLOW_ROLES);
 const nonTerminalStates = CASE_STATES.filter(
   (s) => !TERMINAL_CASE_STATES.includes(s),
 ) as [string, ...string[]];

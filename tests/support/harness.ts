@@ -24,6 +24,7 @@ import {
   MockSyntheticScanner,
   type ArtifactScanner,
 } from "../../apps/core-api/src/scanner.js";
+import { ScheduleService } from "../../apps/core-api/src/schedule.js";
 import { CaseService } from "../../apps/core-api/src/service.js";
 import {
   LocalEncryptedArtifactStore,
@@ -114,6 +115,8 @@ export async function testApi(
     scanner?: ArtifactScanner;
     extractor?: ExtractionPort;
     store?: ArtifactStore;
+    /** Clock for the appointment book (scheduling tests). */
+    now?: () => Date;
   } = {},
 ): Promise<TestApi> {
   const artifactRoot = await mkdtemp(join(tmpdir(), "access-artifacts-"));
@@ -140,9 +143,14 @@ export async function testApi(
           apiPool(),
         )
       : new SyntheticAuthenticator();
+  const schedule = new ScheduleService({
+    pool: apiPool(),
+    ...(options.now ? { now: options.now } : {}),
+  });
   const app = await buildApp({
     pool: apiPool(),
     service,
+    schedule,
     authenticator,
     corsOrigins: ["http://localhost:3000"],
     info: { profile: "local", dataMode: "SYNTHETIC", buildId: "test" },

@@ -7,3 +7,6 @@ data/
 *.tsbuildinfo
 scratch/
 qualification-report.json
+test-results/
+playwright-report/
+browser-report.json

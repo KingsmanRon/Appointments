@@ -5,7 +5,8 @@ import { label, roleLabel, shortId } from "../format";
 import { clearQueueCache } from "../queueCache";
 import { useSession, type Me } from "../session";
 
-export type NavKey = "queue" | "dashboard" | "new" | "rules";
+export type NavKey =
+  "queue" | "dashboard" | "new" | "book" | "calendar" | "rules";
 const NAV: {
   key: NavKey;
   hash: string;
@@ -35,6 +36,20 @@ const NAV: {
     icon: "plus",
   },
   {
+    key: "book",
+    hash: "#/book",
+    text: "Reception",
+    short: "Book",
+    icon: "book",
+  },
+  {
+    key: "calendar",
+    hash: "#/calendar",
+    text: "Calendar",
+    short: "Calendar",
+    icon: "calendar",
+  },
+  {
     key: "rules",
     hash: "#/rules",
     text: "Rules",
@@ -42,8 +57,14 @@ const NAV: {
     icon: "rules",
   },
 ];
+/** Pages a role can use; a doctor has only their own calendar. */
+export function allowedPages(role: Me["role"]): NavKey[] {
+  if (role === "PRACTITIONER") return ["calendar"];
+  if (role === "READ_ONLY") return ["queue", "dashboard", "calendar", "rules"];
+  return ["queue", "dashboard", "new", "book", "calendar", "rules"];
+}
 const visibleNav = (me: Me) =>
-  NAV.filter((n) => n.key !== "new" || me.role !== "READ_ONLY");
+  NAV.filter((n) => allowedPages(me.role).includes(n.key));
 
 /** The Access Line reduced to a mark: a line of stations ending in a gate. */
 export function AccessMark({ size = 28 }: { size?: number }) {
@@ -77,6 +98,7 @@ const SHORT_ROLE: Record<Me["role"], string> = {
   PRACTICE_MANAGER: "Manager",
   REFERRAL_COORDINATOR: "Coordinator",
   READ_ONLY: "Read-only",
+  PRACTITIONER: "Doctor",
 };
 
 function Context({ me }: { me: Me }) {
@@ -131,7 +153,11 @@ export function Shell({
         <div className="rail__brand">
           <AccessMark />
           <span className="rail__word">ACCESS</span>
-          <span className="rail__sub">Referral operations</span>
+          <span className="rail__sub">
+            {me.role === "PRACTITIONER"
+              ? "Your calendar"
+              : "Referral operations"}
+          </span>
         </div>
         <DataMode mode={me.data_mode} />
         <nav className="rail__nav" aria-label="Primary">
@@ -171,7 +197,10 @@ export function Shell({
       </aside>
 
       <header className="topbar night">
-        <a className="topbar__brand" href="#/queue">
+        <a
+          className="topbar__brand"
+          href={me.role === "PRACTITIONER" ? "#/calendar" : "#/queue"}
+        >
           <AccessMark size={26} />
           <span>ACCESS</span>
         </a>

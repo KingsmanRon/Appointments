@@ -33,6 +33,11 @@ const TENANT_TABLES = [
   "appointment_requests",
   "appointments",
   "appointment_slot_holds",
+  "practitioners",
+  "practitioner_working_hours",
+  "practitioner_blocks",
+  "scheduled_appointments",
+  "scheduled_appointment_events",
 ];
 
 describe.runIf(databaseEnabled)(

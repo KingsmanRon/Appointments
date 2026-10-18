@@ -50,14 +50,26 @@ A person decides.
 ## Residual risks and open items (before production)
 
 - No real PMS connector is qualified; the pilot uses manual destination entry.
+- Native scheduling ([design](native-scheduling.md)) stores patient names and
+  contact details for booking. A `PRACTITIONER` session is confined to its
+  own calendar by restrictive row-level security on `app.actor_id`. Calendar
+  and appointment views are written to `access_audit_log` without patient
+  details; `/v1` responses are `no-store`; the console signs out after 15
+  idle minutes.
   The DTM connector delivers referrals in synthetic mode only until it is
   qualified ([DTM connector](connectors/dtm.md)). Its signing secret
   (`DTM_SECRET`) is worker-only, and the delivery it sends is built in memory
   and never stored or logged.
 - No key-rotation procedure for `ARTIFACT_ENCRYPTION_KEY` is automated
   (the `encryption_key_id` column supports it; a re-encryption job is future).
-- Retention: `retention_until` is recorded; the purge job is not implemented,
-  so deletion is an operator procedure (runbooks).
+- Retention: `retention_until` is recorded for artifacts; their purge job is
+  not implemented, so deletion is an operator procedure (runbooks).
+  Appointments have an operator purge (`npm run schedule:purge`); the
+  retention period is the practice's decision.
+- Multi-factor authentication is not enforced by ACCESS: the API does not
+  check the token's `aal` claim and the console has no MFA step. This blocks
+  real patient data unless the client records a waiver
+  ([native-scheduling-release.md](native-scheduling-release.md), B8).
 - ClamAV signature freshness must be monitored; the sidecar image updates
   signatures on start and via freshclam.
 - Penetration test, DAST, dependency/container scanning in the release

@@ -1,6 +1,6 @@
 import { ConfigError, loadApiConfig, type ApiConfig } from "@access/config";
 import { createPool, verifyRuntimeIdentity } from "@access/db";
-import { log } from "@access/observability";
+import { errorFields, log } from "@access/observability";
 import { buildApp } from "./app.js";
 import { JwtAuthenticator, SyntheticAuthenticator } from "./auth.js";
 import { IntakeExtractor } from "./extraction.js";
@@ -9,6 +9,7 @@ import {
   MockSyntheticScanner,
   type ArtifactScanner,
 } from "./scanner.js";
+import { ScheduleService } from "./schedule.js";
 import { CaseService } from "./service.js";
 import {
   LocalEncryptedArtifactStore,
@@ -32,6 +33,7 @@ const pool = createPool({
   caCertPath: config.databaseCaCertPath,
   caCert: config.databaseCaCert,
   applicationName: "access-api",
+  onIdleError: (e) => log("warn", "database connection lost", errorFields(e)),
 });
 if (config.profile !== "local")
   await verifyRuntimeIdentity(pool, "access_request");
@@ -72,6 +74,7 @@ const service = new CaseService({
 const app = await buildApp({
   pool,
   service,
+  schedule: new ScheduleService({ pool }),
   authenticator:
     config.auth.mode === "jwt"
       ? new JwtAuthenticator(config.auth, pool)
