@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL?: string;
   /** Public anon key only. Never a service-role key. */
   readonly VITE_SUPABASE_ANON_KEY?: string;
+  /** Minutes without activity before the console signs out (default 15). */
+  readonly VITE_IDLE_MINUTES?: string;
 }
 interface ImportMeta {
   readonly env: ImportMetaEnv;

@@ -217,9 +217,28 @@ changed.
   bookings only. Existing appointments outside the new hours are not flagged.
 - **One kind of booking.** There are no appointment types, rooms,
   equipment, buffers, holds, waitlists, reminders or patient self-booking.
-- **No read audit.** Calendar reads are not audited. Writes are, in the
-  appointment history and the audit log for configuration.
+- **Read audit is per view, not per patient.** Every calendar view and
+  appointment opened is written to `access_audit_log`
+  (`schedule.calendar.view`, `schedule.appointment.view`): who, which
+  practitioner or appointment, which days, and whether patient details were
+  shown. The appointments seen are found from the range, so the log never
+  copies patient details.
 - **Times are SAST.** Time-zone handling is exercised for
   Africa/Johannesburg, which has no daylight saving. Zones with daylight
   saving use PostgreSQL's conversion but are untested.
-- **No admin screen.** Practitioners are set up through the API or the seed.
+- **No admin screen.** Practitioners are set up through the API or the seed,
+  and cannot yet be deactivated or relinked through the API.
+
+Release blockers, optional improvements and the staging acceptance checklist
+are in [native-scheduling-release.md](native-scheduling-release.md).
+
+## Access protections added in review
+
+- **Read audit.** Calendar and appointment views are written to the access
+  log, as described above.
+- **No caching.** Every `/v1` response carries `Cache-Control: no-store`, so
+  calendars and cases are not kept in a shared computer's browser cache.
+- **Idle sign-out.** The console signs out after 15 minutes without activity
+  in any tab (`VITE_IDLE_MINUTES`), and the sign-in page says why.
+- **Unknown roles get nothing.** A role this release does not know gets no
+  permissions instead of an error.

@@ -99,7 +99,9 @@ const matrix: Record<StaffRole, readonly Permission[]> = {
   ADMIN: [...manager, "rule_set.write", "membership.manage"],
 };
 export function can(role: StaffRole, permission: Permission): boolean {
-  return matrix[role].includes(permission);
+  // An unknown role (e.g. a membership written by a newer release) gets
+  // nothing rather than an error.
+  return matrix[role]?.includes(permission) ?? false;
 }
 export class ForbiddenError extends Error {
   readonly statusCode = 403;

@@ -77,6 +77,11 @@ export function Login() {
             <Icon name="arrowRight" size={18} />
           </button>
         </form>
+        {session.notice && (
+          <p className="note" role="status">
+            {session.notice}
+          </p>
+        )}
         {session.error && (
           <p className="alert" role="alert">
             {session.error}
@@ -160,6 +165,11 @@ export function Login() {
             </p>
           )}
         </div>
+        {session.notice && (
+          <p className="note" role="status">
+            {session.notice}
+          </p>
+        )}
         {session.error === "TENANT_SELECTION_REQUIRED" && <TenantPicker />}
         {session.error && session.error !== "TENANT_SELECTION_REQUIRED" && (
           <p className="alert" role="alert">

@@ -617,6 +617,22 @@ export class ScheduleService {
           WHERE tenant_id=$1 AND practitioner_id=$2 AND removed_at IS NULL ORDER BY weekday,start_minute`,
         [auth.tenantId, p.id],
       );
+      // POPIA access log: who opened whose diary, for which days. The
+      // payload names no patient; the appointments are found by the range.
+      await this.audit(
+        c,
+        auth,
+        randomUUID(),
+        "schedule.calendar.view",
+        "practitioner",
+        p.id,
+        {
+          from: range.from,
+          to: range.to,
+          appointments: appointments.rowCount ?? 0,
+          patient_details: can(auth.role, "schedule.read_patient_details"),
+        },
+      );
       return {
         practitioner: practitionerView(p),
         from: range.from,
@@ -636,7 +652,12 @@ export class ScheduleService {
     });
   }
 
-  async appointment(auth: AuthContext, appointmentId: string) {
+  /**
+   * One appointment and its history. An explicit read is written to the
+   * access log; the read that answers a booking or change is not (the
+   * appointment history already records that write).
+   */
+  async appointment(auth: AuthContext, appointmentId: string, audited = true) {
     return this.tx(auth, async (c) => {
       if (auth.role !== "PRACTITIONER") authorize(auth.role, "schedule.read");
       else authorize(auth.role, "schedule.read_own");
@@ -665,6 +686,19 @@ export class ScheduleService {
            FROM scheduled_appointment_events WHERE tenant_id=$1 AND appointment_id=$2 ORDER BY occurred_at, event_type`,
         [auth.tenantId, appointmentId],
       );
+      if (audited)
+        await this.audit(
+          c,
+          auth,
+          randomUUID(),
+          "schedule.appointment.view",
+          "scheduled_appointment",
+          row.id,
+          {
+            practitioner_id: row.practitioner_id,
+            patient_details: can(auth.role, "schedule.read_patient_details"),
+          },
+        );
       return {
         appointment: appointmentView(row, auth.role),
         history: events.rows.map((e) => ({
@@ -967,7 +1001,7 @@ export class ScheduleService {
     );
     return {
       ...result,
-      ...(await this.appointment(auth, result.appointment_id)),
+      ...(await this.appointment(auth, result.appointment_id, false)),
     };
   }
 
@@ -1212,7 +1246,7 @@ export class ScheduleService {
     );
     return {
       ...result,
-      ...(await this.appointment(auth, result.appointment_id)),
+      ...(await this.appointment(auth, result.appointment_id, false)),
     };
   }
 }

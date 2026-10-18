@@ -87,6 +87,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.addHook("onRequest", async (req) => {
     req.startedAt = Date.now();
   });
+  // API answers can carry patient details (calendars, cases): never let a
+  // browser or proxy keep them, e.g. on a shared reception computer.
+  app.addHook("onSend", async (req, reply) => {
+    if (req.url.startsWith("/v1/")) reply.header("cache-control", "no-store");
+  });
   app.addHook("onResponse", async (req, reply) =>
     log("info", "http_request", {
       method: req.method,

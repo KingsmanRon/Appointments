@@ -64,6 +64,8 @@ describe("workforce authorisation", () => {
         "schedule.complete",
       ],
     });
+    // A role this release does not know gets nothing, rather than an error.
+    expect(can("SOMETHING_NEW" as never, "schedule.read")).toBe(false);
     // A practitioner never reaches the referral queue or any case action.
     expect(can("PRACTITIONER", "case.read")).toBe(false);
     expect(can("PRACTITIONER", "referral.ingest")).toBe(false);

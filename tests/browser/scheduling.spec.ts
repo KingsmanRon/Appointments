@@ -320,3 +320,30 @@ test("a doctor reaches only his calendar; read-only staff see the diary without 
     readOnly.locator(".rail__nav a", { hasText: "Reception" }),
   ).toHaveCount(0);
 });
+
+test("an idle console signs out after 15 minutes and says why; activity keeps it open", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.clock.install();
+  await page.goto("/");
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload();
+  await page.getByLabel("Role").selectOption("REFERRAL_COORDINATOR");
+  await page.getByLabel("Staff name (synthetic)").fill("reception-idle");
+  await page.getByRole("button", { name: "Enter console" }).click();
+  await expect(page.locator(".app")).toBeVisible();
+  // Ten minutes, a key press, ten more minutes: still signed in.
+  await page.clock.fastForward("10:00");
+  await page.keyboard.press("Shift");
+  await page.clock.fastForward("10:00");
+  await expect(page.locator(".app")).toBeVisible();
+  // Then sixteen quiet minutes: signed out, with the reason shown.
+  await page.clock.fastForward("16:00");
+  await expect(page.locator(".login")).toBeVisible();
+  await expect(page.getByRole("status")).toContainText(
+    "signed out after 15 minutes without activity",
+  );
+  await context.close();
+});

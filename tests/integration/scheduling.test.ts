@@ -987,4 +987,142 @@ describe.runIf(databaseEnabled)("native scheduling (PostgreSQL, API)", () => {
       ).rejects.toThrow();
     });
   });
+  describe("access auditing, caching and configuration races", () => {
+    const audits = async (tenant: string, action: string) =>
+      (
+        await ownerPool().query(
+          "SELECT actor_id,actor_role,target_type,target_id,payload FROM access_audit_log WHERE tenant_id=$1 AND action=$2 ORDER BY id",
+          [tenant, action],
+        )
+      ).rows;
+
+    it("every calendar and appointment read is in the access log, without patient details", async () => {
+      const { tenant, drM } = await practice();
+      const booked = await book(tenant, phoneBooking(drM, at("08:00")));
+      // Booking answers with the appointment: that is the write, not a view.
+      expect(await audits(tenant, "schedule.appointment.view")).toEqual([]);
+      await req(
+        tenant,
+        "GET",
+        `/v1/schedule/calendar?from=${MONDAY}&to=${MONDAY}`,
+        undefined,
+        "PRACTITIONER",
+        "dr-m",
+      );
+      await req(
+        tenant,
+        "GET",
+        `/v1/schedule/calendar?practitioner_id=${drM}&from=${MONDAY}&to=2026-11-06`,
+      );
+      await req(
+        tenant,
+        "GET",
+        `/v1/schedule/calendar?practitioner_id=${drM}&from=${MONDAY}&to=${MONDAY}`,
+        undefined,
+        "READ_ONLY",
+        "auditor",
+      );
+      await req(
+        tenant,
+        "GET",
+        `/v1/schedule/appointments/${booked.json().appointment_id}`,
+        undefined,
+        "PRACTITIONER",
+        "dr-m",
+      );
+      const views = await audits(tenant, "schedule.calendar.view");
+      expect(views).toEqual([
+        {
+          actor_id: "synthetic:dr-m",
+          actor_role: "PRACTITIONER",
+          target_type: "practitioner",
+          target_id: drM,
+          payload: {
+            from: MONDAY,
+            to: MONDAY,
+            appointments: 1,
+            patient_details: true,
+          },
+        },
+        expect.objectContaining({
+          actor_id: "synthetic:reception-1",
+          payload: expect.objectContaining({
+            to: "2026-11-06",
+            patient_details: true,
+          }),
+        }),
+        expect.objectContaining({
+          actor_role: "READ_ONLY",
+          payload: expect.objectContaining({ patient_details: false }),
+        }),
+      ]);
+      expect(await audits(tenant, "schedule.appointment.view")).toEqual([
+        expect.objectContaining({
+          actor_id: "synthetic:dr-m",
+          target_id: booked.json().appointment_id,
+        }),
+      ]);
+      const all = JSON.stringify(
+        await audits(tenant, "schedule.calendar.view"),
+      );
+      expect(all).not.toContain("Synthetic");
+      expect(all).not.toContain("+27");
+      // A refused read (another practitioner's calendar) leaves no view row.
+      const before = (await audits(tenant, "schedule.calendar.view")).length;
+      await req(
+        tenant,
+        "GET",
+        `/v1/schedule/calendar?practitioner_id=${randomUUID()}&from=${MONDAY}&to=${MONDAY}`,
+        undefined,
+        "PRACTITIONER",
+        "dr-m",
+      );
+      expect(await audits(tenant, "schedule.calendar.view")).toHaveLength(
+        before,
+      );
+    });
+
+    it("answers carrying patient details are never cached", async () => {
+      const { tenant, drM } = await practice();
+      const cal = await req(
+        tenant,
+        "GET",
+        `/v1/schedule/calendar?practitioner_id=${drM}&from=${MONDAY}&to=${MONDAY}`,
+      );
+      expect(cal.headers["cache-control"]).toBe("no-store");
+      const refused = await book(tenant, phoneBooking(drM, at("12:30")));
+      expect(refused.headers["cache-control"]).toBe("no-store");
+    });
+
+    it("a new block and a booking racing for the same time never both succeed", async () => {
+      for (let round = 0; round < 5; round++) {
+        const { tenant, drM } = await practice();
+        const [blocked, booked] = await Promise.all([
+          req(
+            tenant,
+            "POST",
+            `/v1/schedule/practitioners/${drM}/blocks`,
+            {
+              command_id: randomUUID(),
+              starts_at: at("14:00"),
+              ends_at: at("15:00"),
+              reason_code: "MEETING",
+            },
+            "PRACTICE_MANAGER",
+          ),
+          book(tenant, phoneBooking(drM, at("14:15"))),
+        ]);
+        const both = blocked.statusCode === 201 && booked.statusCode === 201;
+        expect(both).toBe(false);
+        expect(
+          [blocked.statusCode === 201, booked.statusCode === 201].filter(
+            Boolean,
+          ),
+        ).toHaveLength(1);
+        if (blocked.statusCode === 201)
+          expect(booked.json().error).toBe("TIME_BLOCKED");
+        else expect(blocked.json().error).toBe("BLOCK_OVERLAPS_APPOINTMENTS");
+      }
+    });
+  });
 });

@@ -52,8 +52,10 @@ A person decides.
 - No real PMS connector is qualified; the pilot uses manual destination entry.
 - Native scheduling ([design](native-scheduling.md)) stores patient names and
   contact details for booking. A `PRACTITIONER` session is confined to its
-  own calendar by restrictive row-level security on `app.actor_id`; calendar
-  reads are not yet audited.
+  own calendar by restrictive row-level security on `app.actor_id`. Calendar
+  and appointment views are written to `access_audit_log` without patient
+  details; `/v1` responses are `no-store`; the console signs out after 15
+  idle minutes.
   The DTM connector delivers referrals in synthetic mode only until it is
   qualified ([DTM connector](connectors/dtm.md)). Its signing secret
   (`DTM_SECRET`) is worker-only, and the delivery it sends is built in memory
