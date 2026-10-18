@@ -238,6 +238,8 @@ are in [native-scheduling-release.md](native-scheduling-release.md).
   log, as described above.
 - **No caching.** Every `/v1` response carries `Cache-Control: no-store`, so
   calendars and cases are not kept in a shared computer's browser cache.
+- **Retention.** Finished appointments can be purged by an operator once a
+  retention period is agreed ([runbooks.md](runbooks.md#retention-and-deletion)).
 - **Idle sign-out.** The console signs out after 15 minutes without activity
   in any tab (`VITE_IDLE_MINUTES`), and the sign-in page says why.
 - **Unknown roles get nothing.** A role this release does not know gets no

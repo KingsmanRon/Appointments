@@ -62,8 +62,14 @@ A person decides.
   and never stored or logged.
 - No key-rotation procedure for `ARTIFACT_ENCRYPTION_KEY` is automated
   (the `encryption_key_id` column supports it; a re-encryption job is future).
-- Retention: `retention_until` is recorded; the purge job is not implemented,
-  so deletion is an operator procedure (runbooks).
+- Retention: `retention_until` is recorded for artifacts; their purge job is
+  not implemented, so deletion is an operator procedure (runbooks).
+  Appointments have an operator purge (`npm run schedule:purge`); the
+  retention period is the practice's decision.
+- Multi-factor authentication is not enforced by ACCESS: the API does not
+  check the token's `aal` claim and the console has no MFA step. This blocks
+  real patient data unless the client records a waiver
+  ([native-scheduling-release.md](native-scheduling-release.md), B8).
 - ClamAV signature freshness must be monitored; the sidecar image updates
   signatures on start and via freshclam.
 - Penetration test, DAST, dependency/container scanning in the release

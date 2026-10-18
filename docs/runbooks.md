@@ -61,6 +61,34 @@ an automated purge exists: for resolved cases past retention, delete the
 object from the bucket and set `deleted_at` (owner connection), recording the
 action in the release/operations log. Evidence and metadata are retained.
 
+Appointments and their history are never deleted at runtime: guard triggers
+refuse it for every role. Once the practice has agreed a retention period,
+purge one organisation's finished appointments with the migration credential:
+
+```bash
+MIGRATION_DATABASE_URL=… TENANT_ID=<uuid> \
+PURGE_BEFORE=2025-01-01T00:00:00+02:00 OPERATOR="ops ticket 123" \
+npm run schedule:purge              # counts only, then rolls back
+… CONFIRM=yes npm run schedule:purge   # deletes
+```
+
+- **What goes.** Whole reschedule chains, only when every appointment in the
+  chain is cancelled, completed, did-not-attend or moved, and ended before
+  `PURGE_BEFORE`. Their history goes too, and so do blocks that ended before
+  it.
+- **What stays.** Anything still booked or checked in stays, however old.
+  Resolve those first.
+- **Guards.** The cutoff must be at least a day old. The triggers are lifted
+  only inside the purge's transaction. One `schedule.retention.purge` audit
+  row records the counts.
+
+## Database restart or failover
+
+The API and worker survive a database restart: they log
+`database connection lost` and reconnect on the next query. `/ready` answers
+503 while the database is down. Resend refused bookings with the same
+`command_id`. Retries are idempotent, so a booking is never duplicated.
+
 ## Migrations
 
 `npm run db:migrate` (or the Azure migrate job) applies only unapplied files in
@@ -83,6 +111,21 @@ compatible with the current schema; `0003` removed the legacy
 `referrals.state/version` columns, so pre-v1.1 images cannot run against a
 v1.1 schema — use a forward fix. Verify `/ready`, queue age and one synthetic
 end-to-end referral before resuming dispatch.
+
+Rolling back past a migration: an older image's migration runner refuses a
+database holding a migration it does not know. Change the API and worker
+images only, and never run `deploy.sh` or the migration job with the older
+image. For native scheduling (`0007`), suspend `PRACTITIONER` memberships
+first, while the newer build is still running
+([native-scheduling-release.md](native-scheduling-release.md#63-11-rollback-rehearsed-locally)).
+
+A logical restore goes into an empty database only, in one transaction:
+
+1. create the `access_request` and `access_worker` roles;
+2. `pg_restore --no-owner --single-transaction --exit-on-error`;
+3. `runtime-roles.sql`.
+
+A data-only restore into a migrated database fails on the guard triggers.
 
 ## Onboarding staff
 

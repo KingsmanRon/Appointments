@@ -42,7 +42,7 @@ jobs:
           APPOINTMENT_QUALIFICATION_REPORT: appointment-qualification-report.json
         run: npx vitest run --project integration --reporter=verbose --reporter=json --outputFile.json=integration-report.json
       - name: Assert integration suites ran without skips
-        run: node scripts/assert-test-report.mjs integration-report.json 149
+        run: node scripts/assert-test-report.mjs integration-report.json 153
       - name: Build
         run: npm run build
       - name: Install Bicep
